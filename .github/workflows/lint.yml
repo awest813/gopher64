@@ -51,6 +51,8 @@ jobs:
             env.LLVM_VERSION }}/LLVM-${{ env.LLVM_VERSION }}-Linux-X64.tar.xz
       - name: Rustfmt Check
         uses: actions-rust-lang/rustfmt@v1
+      - name: Test
+        run: cargo test
       - name: Lint
         run: |
           cargo install slint-tr-extractor

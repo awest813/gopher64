@@ -57,7 +57,7 @@ sdl3-image-sys = { version = "0.6", features = ["build-from-source"] }
 winresource = "0.1"
 bindgen = "0.72"
 sdl3-src = "3.4"
-slint-build = { version = "1.12", optional = true }
+slint-build = { version = "1.16", optional = true }
 cc = { version = "1.2", features = ["parallel"] }
 
 [profile.release]

@@ -207,8 +207,9 @@ fn manage_websocket(
                         Ok(None) => {
                             break;
                         }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                            panic!("netplay_write_receiver lagged");
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            eprintln!("netplay_write_receiver lagged, skipped {n} messages");
+                            continue;
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                             break; // exit the loop if the receiver is closed
@@ -353,7 +354,16 @@ fn create_session(
             }
             Ok(Ok(None)) => {}
             Ok(Err(err)) => {
-                panic!("netplay_read_receiver error: {err}");
+                eprintln!("netplay_read_receiver error: {err}");
+                weak_app
+                    .upgrade_in_event_loop(move |handle| {
+                        handle.set_netplay_pending_session(false);
+                        handle.invoke_show_message(
+                            format!("Netplay connection error: {err}").into(),
+                            true,
+                        );
+                    })
+                    .unwrap();
             }
             Err(_) => {
                 weak_app
@@ -590,8 +600,9 @@ fn setup_wait_window(
                 Ok(None) => {
                     break;
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    panic!("netplay_read_receiver lagged");
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    eprintln!("netplay_read_receiver lagged, skipped {n} messages");
+                    continue;
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                     break; // exit the loop if the receiver is closed

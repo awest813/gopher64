@@ -1,4 +1,30 @@
+fn check_submodules() {
+    let arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let mut required = vec![
+        "parallel-rdp/parallel-rdp-standalone/parallel-rdp/rdp_device.cpp",
+        "retroachievements/rcheevos/src/rc_client.c",
+    ];
+    if arch == "aarch64" {
+        required.push("src/compat/sse2neon/sse2neon.h");
+    }
+
+    let missing: Vec<&str> = required
+        .iter()
+        .filter(|path| !std::path::Path::new(path).exists())
+        .copied()
+        .collect();
+
+    if !missing.is_empty() {
+        panic!(
+            "Git submodules are not initialized. Missing:\n  {}\n\nRun: git submodule update --init --recursive",
+            missing.join("\n  ")
+        );
+    }
+}
+
 fn main() {
+    check_submodules();
+
     println!("cargo::rerun-if-changed=parallel-rdp");
     println!("cargo::rerun-if-changed=retroachievements");
     println!("cargo::rerun-if-changed=src/compat");

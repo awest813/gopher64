@@ -5,7 +5,7 @@ const AI_LEN_REG: usize = 1;
 // const AI_CONTROL_REG: usize = 2;
 pub const AI_STATUS_REG: usize = 3;
 const AI_DACRATE_REG: usize = 4;
-// const AI_BITRATE_REG: usize = 5;
+const AI_BITRATE_REG: usize = 5;
 pub const AI_REGS_COUNT: usize = 6;
 
 pub const AI_STATUS_BUSY: u32 = 0x40000000;
@@ -44,8 +44,17 @@ fn get_remaining_dma_length(device: &device::Device) -> u64 {
     dma_length & !7
 }
 
+fn get_bytes_per_sample(device: &device::Device) -> u64 {
+    let bitrate = device.ai.regs[AI_BITRATE_REG] & 0xf;
+    if bitrate == 0 {
+        4
+    } else {
+        ((bitrate + 1) / 4).max(1) as u64
+    }
+}
+
 fn get_dma_duration(device: &device::Device) -> u64 {
-    let bytes_per_sample = 4; /* XXX: assume 16bit stereo - should depends on bitrate instead */
+    let bytes_per_sample = get_bytes_per_sample(device);
     let length = (device.ai.regs[AI_LEN_REG] & !7) as u64;
 
     (length * device.cpu.clock_rate) / (bytes_per_sample * device.ai.freq)
@@ -167,4 +176,27 @@ pub fn dma_event(device: &mut device::Device) {
     }
 
     fifo_pop(device);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AI_BITRATE_REG, get_bytes_per_sample};
+
+    fn device_with_bitrate(bitrate: u32) -> crate::device::Device {
+        let mut device = *crate::device::Device::new(false);
+        device.ai.regs[AI_BITRATE_REG] = bitrate;
+        device
+    }
+
+    #[test]
+    fn get_bytes_per_sample_defaults_to_stereo_16bit() {
+        assert_eq!(get_bytes_per_sample(&device_with_bitrate(0)), 4);
+        assert_eq!(get_bytes_per_sample(&device_with_bitrate(15)), 4);
+    }
+
+    #[test]
+    fn get_bytes_per_sample_scales_with_bitrate() {
+        assert_eq!(get_bytes_per_sample(&device_with_bitrate(7)), 2);
+        assert_eq!(get_bytes_per_sample(&device_with_bitrate(3)), 1);
+    }
 }

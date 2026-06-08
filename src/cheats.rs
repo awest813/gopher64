@@ -1,7 +1,7 @@
 use crate::device;
 use crate::ui;
 
-#[derive(serde::Serialize, serde::Deserialize, Copy, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
 pub struct DecodedCheat {
     code_type: u8,
     address: u32,
@@ -23,6 +23,17 @@ pub struct CheatData {
 }
 
 pub type Cheat = std::collections::BTreeMap<String, std::collections::BTreeMap<String, CheatData>>;
+
+fn decode_cheat_line(code: &str) -> Option<DecodedCheat> {
+    let mut split = code.split_whitespace();
+    let first_part = u32::from_str_radix(split.next()?, 16).ok()?;
+    let data = u16::from_str_radix(split.next()?, 16).ok()?;
+    Some(DecodedCheat {
+        code_type: (first_part >> 24) as u8,
+        address: first_part & 0x00FFFFFF,
+        data,
+    })
+}
 
 pub fn init(
     device: &mut device::Device,
@@ -64,14 +75,8 @@ pub fn init(
                 if let Some(option_value) = option_value.as_ref() {
                     result = re.replace_all(code, option_value).into_owned();
                 }
-                let mut split = result.split_whitespace();
-                let first_part = u32::from_str_radix(split.next().unwrap(), 16).unwrap();
-                if let Ok(data) = u16::from_str_radix(split.next().unwrap(), 16) {
-                    decoded_cheat.push(DecodedCheat {
-                        code_type: (first_part >> 24) as u8,
-                        address: first_part & 0x00FFFFFF,
-                        data,
-                    })
+                if let Some(cheat) = decode_cheat_line(&result) {
+                    decoded_cheat.push(cheat);
                 } else {
                     eprintln!("Could not parse data for: {}", cheat_setting.0);
                 };
@@ -201,4 +206,28 @@ pub fn execute_cheats(device: &mut device::Device, cheats: Vec<Vec<DecodedCheat>
         }
     }
     device.cheats.boot = false;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DecodedCheat, decode_cheat_line};
+
+    #[test]
+    fn decode_cheat_line_parses_gs_code() {
+        let cheat = decode_cheat_line("80123456 0001").unwrap();
+        assert_eq!(
+            cheat,
+            DecodedCheat {
+                code_type: 0x80,
+                address: 0x123456,
+                data: 0x0001,
+            }
+        );
+    }
+
+    #[test]
+    fn decode_cheat_line_rejects_invalid_input() {
+        assert!(decode_cheat_line("not a cheat").is_none());
+        assert!(decode_cheat_line("80123456").is_none());
+    }
 }

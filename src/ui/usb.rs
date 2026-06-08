@@ -50,8 +50,9 @@ async fn handle_connection(
                                 break;
                             }
                         }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                            panic!("usb_rx lagged");
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            eprintln!("usb_rx lagged, skipped {n} messages");
+                            continue;
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                           break;
@@ -106,7 +107,7 @@ async fn handle_connection(
                                 if usb_data.data_type == DATATYPE_TCPTEST {
                                     respond_to_handshake(&usb_tx,usb_data.data);
                                 } else if usb_data.data_type == DATATYPE_ROMUPLOAD {
-                                    panic!("ROM upload not supported");
+                                    eprintln!("ROM upload not supported");
                                 } else {
                                     cart_tx.send(usb_data).unwrap();
                                 }

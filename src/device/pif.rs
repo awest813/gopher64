@@ -111,10 +111,19 @@ fn disable_pif_channel(channel: &mut PifChannel) {
 }
 
 fn setup_pif_channel(device: &mut device::Device, channel: usize, buf: usize) -> usize {
+    if buf + 1 >= PIF_RAM_SIZE {
+        disable_pif_channel(&mut device.pif.channels[channel]);
+        return 1;
+    }
+
     let tx = device.pif.ram[buf] & 0x3f;
     let rx = device.pif.ram[buf + 1] & 0x3f;
+    let channel_end = buf + 2 + tx as usize + rx as usize;
 
-    /* XXX: check out of bounds accesses */
+    if channel_end > PIF_RAM_SIZE {
+        disable_pif_channel(&mut device.pif.channels[channel]);
+        return 2;
+    }
 
     device.pif.channels[channel].tx = Some(buf);
     device.pif.channels[channel].rx = Some(buf + 1);
