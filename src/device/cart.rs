@@ -36,6 +36,10 @@ fn bcd2byte(b: u8) -> u32 {
     ((b >> 4) as u32 * 10) + (b & 0x0f) as u32
 }
 
+fn is_valid_bcd(b: u8) -> bool {
+    (b & 0x0f) < 10 && (b >> 4) < 10
+}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Cart {
     #[serde(skip)]
@@ -168,13 +172,24 @@ fn time2data(device: &mut device::Device, offset: usize) {
 }
 
 fn data2time(device: &mut device::Device, offset: usize) -> bool {
-    let second = bcd2byte(device.pif.ram[offset]);
-    let minute = bcd2byte(device.pif.ram[offset + 1]);
-    let hour = bcd2byte(device.pif.ram[offset + 2] & 0x7f);
-    let day = bcd2byte(device.pif.ram[offset + 3]);
-    let month = bcd2byte(device.pif.ram[offset + 5]);
-    let years_since_1900 =
-        bcd2byte(device.pif.ram[offset + 6]) + bcd2byte(device.pif.ram[offset + 7]) * 100;
+    let data = &device.pif.ram[offset..offset + 8];
+    if !is_valid_bcd(data[0])
+        || !is_valid_bcd(data[1])
+        || !is_valid_bcd(data[2] & 0x7f)
+        || !is_valid_bcd(data[3])
+        || !is_valid_bcd(data[5])
+        || !is_valid_bcd(data[6])
+        || !is_valid_bcd(data[7])
+    {
+        return false;
+    }
+
+    let second = bcd2byte(data[0]);
+    let minute = bcd2byte(data[1]);
+    let hour = bcd2byte(data[2] & 0x7f);
+    let day = bcd2byte(data[3]);
+    let month = bcd2byte(data[5]);
+    let years_since_1900 = bcd2byte(data[6]) + bcd2byte(data[7]) * 100;
     let year = 1900 + years_since_1900 as i32;
 
     let Some(datetime) = chrono::Local
@@ -240,7 +255,7 @@ fn af_rtc_write_block(device: &mut device::Device, block: usize, offset: usize, 
 
 #[cfg(test)]
 mod tests {
-    use super::{bcd2byte, byte2bcd};
+    use super::{bcd2byte, byte2bcd, is_valid_bcd};
 
     #[test]
     fn byte2bcd_roundtrip() {
@@ -253,5 +268,12 @@ mod tests {
     fn bcd2byte_parses_digits() {
         assert_eq!(bcd2byte(0x45), 45);
         assert_eq!(bcd2byte(0x07), 7);
+    }
+
+    #[test]
+    fn is_valid_bcd_rejects_invalid_nibbles() {
+        assert!(is_valid_bcd(0x45));
+        assert!(!is_valid_bcd(0x1a));
+        assert!(!is_valid_bcd(0xa0));
     }
 }

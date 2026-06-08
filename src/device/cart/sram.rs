@@ -1,7 +1,8 @@
 use crate::{device, ui};
 
-const SRAM_MASK: usize = 0xFFFF;
-pub const SRAM_SIZE: usize = 0x8000;
+fn sram_mask(device: &device::Device) -> usize {
+    device.ui.storage.sram_size - 1
+}
 pub const FLASHRAM_SIZE: usize = 0x20000;
 pub const FLASHRAM_TYPE_ID: u32 = 0x11118001;
 pub const MX29L1100_ID: u32 = 0x00c2001e;
@@ -29,8 +30,9 @@ pub struct Flashram {
 }
 
 pub fn format_sram(device: &mut device::Device) {
-    if device.ui.storage.saves.sram.data.len() < SRAM_SIZE {
-        device.ui.storage.saves.sram.data.resize(SRAM_SIZE, 0xFF)
+    let size = device.ui.storage.sram_size;
+    if device.ui.storage.saves.sram.data.len() < size {
+        device.ui.storage.saves.sram.data.resize(size, 0xFF)
     }
 }
 
@@ -47,7 +49,7 @@ pub fn format_flash(device: &mut device::Device) {
 }
 
 fn read_mem_sram(device: &mut device::Device, address: u64) -> u32 {
-    let masked_address = address as usize & SRAM_MASK;
+    let masked_address = address as usize & sram_mask(device);
 
     u32::from_be_bytes(
         device.ui.storage.saves.sram.data[masked_address..masked_address + 4]
@@ -92,7 +94,7 @@ pub fn read_mem(
 }
 
 fn write_mem_sram(device: &mut device::Device, address: u64, value: u32, mask: u32) {
-    let masked_address = address as usize & SRAM_MASK;
+    let masked_address = address as usize & sram_mask(device);
 
     let mut data = u32::from_be_bytes(
         device.ui.storage.saves.sram.data[masked_address..masked_address + 4]
@@ -139,7 +141,7 @@ pub fn write_mem(device: &mut device::Device, address: u64, value: u32, mask: u3
 
 fn dma_read_sram(device: &mut device::Device, mut cart_addr: u32, mut dram_addr: u32, length: u32) {
     dram_addr &= device::rdram::RDRAM_MASK as u32;
-    cart_addr &= SRAM_MASK as u32;
+    cart_addr &= sram_mask(device) as u32;
     let mut i = dram_addr;
     let mut j = cart_addr;
 
@@ -204,7 +206,7 @@ fn dma_write_sram(
     length: u32,
 ) {
     dram_addr &= device::rdram::RDRAM_MASK as u32;
-    cart_addr &= SRAM_MASK as u32;
+    cart_addr &= sram_mask(device) as u32;
     let mut i = dram_addr;
     let mut j = cart_addr;
 

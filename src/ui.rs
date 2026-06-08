@@ -56,12 +56,24 @@ pub struct Input {
 unsafe impl Send for Input {}
 unsafe impl Sync for Input {}
 
-#[derive(Default)]
 pub struct Storage {
     pub save_type: Vec<storage::SaveTypes>,
+    pub sram_size: usize,
     pub paths: storage::Paths,
     pub saves: storage::Saves,
     pub save_state_slot: u32,
+}
+
+impl Default for Storage {
+    fn default() -> Self {
+        Self {
+            save_type: Vec::new(),
+            sram_size: storage::SRAM_SIZE_32K,
+            paths: storage::Paths::default(),
+            saves: storage::Saves::default(),
+            save_state_slot: 0,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -231,6 +243,7 @@ impl Ui {
             storage: Storage {
                 save_state_slot: 0,
                 save_type: vec![],
+                sram_size: storage::SRAM_SIZE_32K,
                 paths: storage::Paths {
                     eep_file_path: std::path::PathBuf::new(),
                     fla_file_path: std::path::PathBuf::new(),

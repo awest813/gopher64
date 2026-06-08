@@ -2,6 +2,10 @@ use crate::{device, netplay, ui};
 use std::io::Read;
 use std::io::Write;
 
+pub const SRAM_SIZE_32K: usize = 0x8000;
+pub const SRAM_SIZE_96K: usize = 0x18000;
+pub const SRAM_SIZE_128K: usize = 0x20000;
+
 #[derive(PartialEq, Debug)]
 pub enum SaveTypes {
     Eeprom4k,
@@ -49,6 +53,19 @@ pub struct Saves {
     pub write_to_disk: bool,
 }
 
+fn get_sram_size(rom: &[u8]) -> usize {
+    if let Ok(header_type) = std::str::from_utf8(rom[0x3C..0x3E].try_into().unwrap())
+        && header_type == "ED"
+    {
+        return match rom[0x3F] >> 4 {
+            4 => SRAM_SIZE_96K,
+            6 => SRAM_SIZE_128K,
+            _ => SRAM_SIZE_32K,
+        };
+    }
+    SRAM_SIZE_32K
+}
+
 fn get_save_type(rom: &[u8], game_id: &str) -> Vec<SaveTypes> {
     if let Ok(header_type) = std::str::from_utf8(rom[0x3C..0x3E].try_into().unwrap())
         && header_type == "ED"
@@ -59,10 +76,13 @@ fn get_save_type(rom: &[u8], game_id: &str) -> Vec<SaveTypes> {
             1 => return vec![SaveTypes::Eeprom4k],
             2 => return vec![SaveTypes::Eeprom16k],
             3 => return vec![SaveTypes::Sram],
-            4 => panic!("Unsupported save type: {save_type}"),
+            4 => return vec![SaveTypes::Sram],
             5 => return vec![SaveTypes::Flash],
-            6 => panic!("Unsupported save type: {save_type}"),
-            _ => panic!("Unknown save type: {save_type}"),
+            6 => return vec![SaveTypes::Sram],
+            _ => {
+                eprintln!("Unknown ED header save type: {save_type}");
+                return vec![];
+            }
         }
     }
     match game_id {
@@ -124,7 +144,9 @@ fn get_save_type(rom: &[u8], game_id: &str) -> Vec<SaveTypes> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SaveTypes, get_save_type};
+    use super::{
+        SRAM_SIZE_32K, SRAM_SIZE_96K, SRAM_SIZE_128K, SaveTypes, get_save_type, get_sram_size,
+    };
 
     fn make_ed_rom(save_type: u8) -> Vec<u8> {
         let mut rom = vec![0u8; 0x40];
@@ -144,9 +166,28 @@ mod tests {
             vec![SaveTypes::Eeprom16k]
         );
         assert_eq!(
+            get_save_type(&make_ed_rom(4), "XXXX"),
+            vec![SaveTypes::Sram]
+        );
+        assert_eq!(
             get_save_type(&make_ed_rom(5), "XXXX"),
             vec![SaveTypes::Flash]
         );
+        assert_eq!(
+            get_save_type(&make_ed_rom(6), "XXXX"),
+            vec![SaveTypes::Sram]
+        );
+        assert_eq!(
+            get_save_type(&make_ed_rom(9), "XXXX"),
+            Vec::<SaveTypes>::new()
+        );
+    }
+
+    #[test]
+    fn get_sram_size_from_ed_header() {
+        assert_eq!(get_sram_size(&make_ed_rom(3)), SRAM_SIZE_32K);
+        assert_eq!(get_sram_size(&make_ed_rom(4)), SRAM_SIZE_96K);
+        assert_eq!(get_sram_size(&make_ed_rom(6)), SRAM_SIZE_128K);
     }
 
     #[test]
@@ -185,6 +226,7 @@ pub fn get_game_name(rom: &[u8]) -> String {
 
 pub fn init(ui: &mut ui::Ui, rom: &[u8]) {
     ui.storage.save_type = get_save_type(rom, &ui.game_id);
+    ui.storage.sram_size = get_sram_size(rom);
 
     let saves_path = ui.dirs.data_dir.join("saves");
 
