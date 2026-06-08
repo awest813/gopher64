@@ -108,8 +108,10 @@ async fn handle_connection(
                                     respond_to_handshake(&usb_tx,usb_data.data);
                                 } else if usb_data.data_type == DATATYPE_ROMUPLOAD {
                                     eprintln!("ROM upload not supported");
-                                } else {
-                                    cart_tx.send(usb_data).unwrap();
+                                } else if cart_tx.send(usb_data).is_err() {
+                                    // No receiver (emulation core gone / resetting);
+                                    // drop the data instead of crashing the task.
+                                    eprintln!("USB cart channel has no receiver; dropping data");
                                 }
                                 data_type = None;
                                 data_size = None;
@@ -193,5 +195,9 @@ pub async fn close(
 }
 
 pub fn send_to_usb(usb_tx: &tokio::sync::broadcast::Sender<UsbData>, buffer: UsbData) {
-    usb_tx.send(buffer).unwrap();
+    // Runs on the emulation thread: a missing receiver (no USB client connected)
+    // must not crash the emulator.
+    if usb_tx.send(buffer).is_err() {
+        eprintln!("USB channel has no receiver; dropping outgoing data");
+    }
 }

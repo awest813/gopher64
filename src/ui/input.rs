@@ -850,7 +850,7 @@ pub fn configure_input_profile(
                         let result = ui::config::InputControllerAxis {
                             enabled: true,
                             id: axis as i32,
-                            axis: axis_value / axis_value.saturating_abs(),
+                            axis: axis_value.signum(),
                             initial_state: 0,
                         };
                         if result != last_joystick_axis_result {
@@ -908,7 +908,11 @@ pub fn configure_input_profile(
                         let result = ui::config::InputControllerAxis {
                             enabled: true,
                             id: axis as i32,
-                            axis: axis_value / axis_value.saturating_abs(),
+                            // signum() instead of `value / value.abs()`: an axis
+                            // that rests at an extreme (e.g. a trigger) can pass
+                            // the abs_diff guard above while value == 0, which
+                            // would divide by zero.
+                            axis: axis_value.signum(),
                             initial_state,
                         };
                         let same_trigger = last_joystick_axis_result.id == result.id
