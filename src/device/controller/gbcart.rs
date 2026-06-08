@@ -1,6 +1,5 @@
 use crate::device;
 
-use std::io::Write;
 const MBC3_RTC_SECONDS: usize = 0;
 const MBC3_RTC_MINUTES: usize = 1;
 const MBC3_RTC_HOURS: usize = 2;
@@ -86,39 +85,36 @@ pub fn save(
 
     if let Ok(file) = std::fs::File::create(ram_path) {
         let mut f = std::io::BufWriter::new(file);
-        f.write_all(&gb_cart.ram).unwrap();
-
-        if gb_cart.cart_type == CartType::MBC3RamBattRtc {
-            f.write_all(&(gb_cart.rtc_regs[MBC3_RTC_SECONDS] as u32).to_le_bytes())
-                .unwrap();
-            f.write_all(&(gb_cart.rtc_regs[MBC3_RTC_MINUTES] as u32).to_le_bytes())
-                .unwrap();
-            f.write_all(&(gb_cart.rtc_regs[MBC3_RTC_HOURS] as u32).to_le_bytes())
-                .unwrap();
-            f.write_all(&(gb_cart.rtc_regs[MBC3_RTC_DAYS_L] as u32).to_le_bytes())
-                .unwrap();
-            f.write_all(&(gb_cart.rtc_regs[MBC3_RTC_DAYS_H] as u32).to_le_bytes())
-                .unwrap();
-
-            f.write_all(&(gb_cart.rtc_regs_latch[MBC3_RTC_SECONDS] as u32).to_le_bytes())
-                .unwrap();
-            f.write_all(&(gb_cart.rtc_regs_latch[MBC3_RTC_MINUTES] as u32).to_le_bytes())
-                .unwrap();
-            f.write_all(&(gb_cart.rtc_regs_latch[MBC3_RTC_HOURS] as u32).to_le_bytes())
-                .unwrap();
-            f.write_all(&(gb_cart.rtc_regs_latch[MBC3_RTC_DAYS_L] as u32).to_le_bytes())
-                .unwrap();
-            f.write_all(&(gb_cart.rtc_regs_latch[MBC3_RTC_DAYS_H] as u32).to_le_bytes())
-                .unwrap();
-
-            let max = ((i32::MAX as i64) << 32) | (i32::MAX as i64);
-            f.write_all(&max.to_le_bytes()).unwrap();
-
-            f.flush().unwrap();
+        // A failing write (full disk, read-only filesystem, ...) must not crash
+        // a running game; log and bail out of this save instead.
+        if let Err(e) = write_ram(&mut f, gb_cart) {
+            eprintln!("Error saving TransferPak RAM to {ram_path}: {e}");
         }
     } else {
         eprintln!("Error saving TransferPak RAM to {ram_path}");
     }
+}
+
+fn write_ram(
+    f: &mut impl std::io::Write,
+    gb_cart: &device::controller::gbcart::GbCart,
+) -> std::io::Result<()> {
+    f.write_all(&gb_cart.ram)?;
+
+    if gb_cart.cart_type == CartType::MBC3RamBattRtc {
+        for reg in MBC3_RTC_SECONDS..=MBC3_RTC_DAYS_H {
+            f.write_all(&(gb_cart.rtc_regs[reg] as u32).to_le_bytes())?;
+        }
+        for reg in MBC3_RTC_SECONDS..=MBC3_RTC_DAYS_H {
+            f.write_all(&(gb_cart.rtc_regs_latch[reg] as u32).to_le_bytes())?;
+        }
+
+        let max = ((i32::MAX as i64) << 32) | (i32::MAX as i64);
+        f.write_all(&max.to_le_bytes())?;
+
+        f.flush()?;
+    }
+    Ok(())
 }
 
 fn update_rtc_regs(cart: &mut device::controller::gbcart::GbCart, elapsed_time: i64) {
