@@ -142,10 +142,13 @@ pub fn init(device: &mut device::Device, rom_file: &[u8]) {
 
     device.ui.game_hash = calculate_hash(&device.cart.rom);
 
-    device.ui.game_id = String::from_utf8(device.cart.rom[0x3B..0x3E].to_vec()).unwrap();
-    if device.ui.game_id.contains('\0') {
-        device.ui.game_id = String::from("UNK");
-    }
+    // The cartridge ID bytes are not guaranteed to be valid UTF-8 (homebrew and
+    // unusual dumps often leave 0x00/0xFF fill here), so fall back to "UNK"
+    // instead of panicking on a non-UTF-8 or null-containing id.
+    device.ui.game_id = match String::from_utf8(device.cart.rom[0x3B..0x3E].to_vec()) {
+        Ok(id) if !id.contains('\0') => id,
+        _ => String::from("UNK"),
+    };
 }
 
 pub fn is_system_pal(rom_contents: &[u8]) -> bool {

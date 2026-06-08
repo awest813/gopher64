@@ -128,6 +128,14 @@ fn init_rng(device: &mut Device) {
 }
 
 fn swap_rom(contents: Vec<u8>) -> Option<Vec<u8>> {
+    // A valid N64 ROM must contain at least the 0x40 byte header and the IPL3
+    // boot code (hashed up to 0x1000 to identify the CIC). Anything smaller is
+    // not a usable ROM, so reject it here rather than panicking later on an
+    // out-of-bounds header/IPL3 access.
+    const MIN_ROM_SIZE: usize = 0x1000;
+    if contents.len() < MIN_ROM_SIZE {
+        return None;
+    }
     let test = u32::from_be_bytes(contents[0..4].try_into().unwrap());
     if test == 0x80371240 {
         // z64
