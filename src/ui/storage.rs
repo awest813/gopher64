@@ -2,7 +2,7 @@ use crate::{device, netplay, ui};
 use std::io::Read;
 use std::io::Write;
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub enum SaveTypes {
     Eeprom4k,
     Eeprom16k,
@@ -119,6 +119,43 @@ fn get_save_type(rom: &[u8], game_id: &str) -> Vec<SaveTypes> {
         _ => {
             vec![SaveTypes::Eeprom4k, SaveTypes::Sram]
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SaveTypes, get_save_type};
+
+    fn make_ed_rom(save_type: u8) -> Vec<u8> {
+        let mut rom = vec![0u8; 0x40];
+        rom[0x3C..0x3E].copy_from_slice(b"ED");
+        rom[0x3F] = save_type << 4;
+        rom
+    }
+
+    #[test]
+    fn get_save_type_from_ed_header() {
+        assert_eq!(
+            get_save_type(&make_ed_rom(1), "XXXX"),
+            vec![SaveTypes::Eeprom4k]
+        );
+        assert_eq!(
+            get_save_type(&make_ed_rom(2), "XXXX"),
+            vec![SaveTypes::Eeprom16k]
+        );
+        assert_eq!(
+            get_save_type(&make_ed_rom(5), "XXXX"),
+            vec![SaveTypes::Flash]
+        );
+    }
+
+    #[test]
+    fn get_save_type_from_game_id() {
+        assert_eq!(
+            get_save_type(&[0u8; 0x40], "NDO"),
+            vec![SaveTypes::Eeprom16k]
+        );
+        assert_eq!(get_save_type(&[0u8; 0x40], "NMQ"), vec![SaveTypes::Flash]);
     }
 }
 

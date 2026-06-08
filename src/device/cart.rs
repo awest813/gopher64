@@ -1,4 +1,5 @@
 use chrono::Datelike;
+use chrono::TimeZone;
 use chrono::Timelike;
 
 use crate::{device, ui};
@@ -29,6 +30,10 @@ pub struct AfRtc {
 fn byte2bcd(mut n: u32) -> u8 {
     n %= 100;
     (((n / 10) << 4) | (n % 10)) as u8
+}
+
+fn bcd2byte(b: u8) -> u32 {
+    ((b >> 4) as u32 * 10) + (b & 0x0f) as u32
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -162,6 +167,27 @@ fn time2data(device: &mut device::Device, offset: usize) {
     device.pif.ram[offset + 7] = byte2bcd((now.year() as u32 - 1900) / 100);
 }
 
+fn data2time(device: &mut device::Device, offset: usize) -> bool {
+    let second = bcd2byte(device.pif.ram[offset]);
+    let minute = bcd2byte(device.pif.ram[offset + 1]);
+    let hour = bcd2byte(device.pif.ram[offset + 2] & 0x7f);
+    let day = bcd2byte(device.pif.ram[offset + 3]);
+    let month = bcd2byte(device.pif.ram[offset + 5]);
+    let years_since_1900 =
+        bcd2byte(device.pif.ram[offset + 6]) + bcd2byte(device.pif.ram[offset + 7]) * 100;
+    let year = 1900 + years_since_1900 as i32;
+
+    let Some(datetime) = chrono::Local
+        .with_ymd_and_hms(year, month, day, hour, minute, second)
+        .single()
+    else {
+        return false;
+    };
+
+    device.cart.rtc_timestamp = datetime.timestamp() - device.vi.elapsed_time as i64;
+    true
+}
+
 fn af_rtc_read_block(device: &mut device::Device, block: usize, offset: usize, status: usize) {
     match device.pif.ram[block] {
         0 => {
@@ -201,12 +227,31 @@ fn af_rtc_write_block(device: &mut device::Device, block: usize, offset: usize, 
                 return;
             }
 
-            /* TODO: implement block 2 writes */
-            panic!("AF-RTC writing block 2 is not implemented !");
+            if data2time(device, offset) {
+                device.pif.ram[status] = 0x00;
+            }
         }
 
         _ => {
             panic!("AF-RTC write invalid block");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bcd2byte, byte2bcd};
+
+    #[test]
+    fn byte2bcd_roundtrip() {
+        for n in [0, 1, 9, 10, 42, 59, 99] {
+            assert_eq!(bcd2byte(byte2bcd(n)), n);
+        }
+    }
+
+    #[test]
+    fn bcd2byte_parses_digits() {
+        assert_eq!(bcd2byte(0x45), 45);
+        assert_eq!(bcd2byte(0x07), 7);
     }
 }
