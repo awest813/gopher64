@@ -146,9 +146,11 @@ pub fn execute_cheats(device: &mut device::Device, cheats: Vec<Vec<DecodedCheat>
         while let Some(cheat_line) = cheat_iter.next() {
             match cheat_line.code_type {
                 0x50 => {
-                    if valid {
+                    // 0x50 is a "repeat" prefix that expands the following line
+                    // `count` times. If it is the last entry the cheat is
+                    // malformed; skip it rather than panicking mid-frame.
+                    if valid && let Some(compressed_cheat) = cheat_iter.peek().copied() {
                         let mut expanded_cheat: Vec<DecodedCheat> = vec![];
-                        let compressed_cheat = *cheat_iter.peek().unwrap();
                         let count = (cheat_line.address & 0xFF00) >> 8;
                         let offset = cheat_line.address & 0xFF;
                         for i in 0..count {
@@ -201,7 +203,9 @@ pub fn execute_cheats(device: &mut device::Device, cheats: Vec<Vec<DecodedCheat>
                     valid = !equal_half(device, cheat_line);
                 }
                 0x88 | 0x89 | 0xD8 | 0xD9 | 0xDA | 0xDB => { /* GS button not emulated */ }
-                _ => panic!("Unknown cheat code type: {:X}", cheat_line.code_type),
+                // The cheat database can contain opcodes this emulator does not
+                // implement. Skip them instead of crashing the running game.
+                _ => {}
             }
         }
     }
@@ -229,5 +233,13 @@ mod tests {
     fn decode_cheat_line_rejects_invalid_input() {
         assert!(decode_cheat_line("not a cheat").is_none());
         assert!(decode_cheat_line("80123456").is_none());
+    }
+
+    #[test]
+    fn decode_cheat_line_preserves_unknown_code_type() {
+        // Unsupported opcodes must still decode so execute_cheats can skip
+        // them at runtime instead of panicking.
+        let cheat = decode_cheat_line("12345678 0000").unwrap();
+        assert_eq!(cheat.code_type, 0x12);
     }
 }

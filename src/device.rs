@@ -169,7 +169,7 @@ fn swap_rom(contents: Vec<u8>) -> Option<Vec<u8>> {
 
 fn read_rom_from_zip(file_path: &std::path::PathBuf) -> Option<Vec<u8>> {
     #[cfg(target_os = "android")]
-    let zip_file = ui::android::get_file_from_uri(file_path).ok()?;
+    let zip_file = ui::android::get_file_from_uri(file_path)?;
     #[cfg(not(target_os = "android"))]
     let zip_file = std::fs::File::open(file_path).ok()?;
     let mut archive = zip::ZipArchive::new(zip_file).ok()?;
@@ -199,7 +199,7 @@ fn read_rom_from_zip(file_path: &std::path::PathBuf) -> Option<Vec<u8>> {
 
 fn read_rom_from_7z(file_path: &std::path::PathBuf) -> Option<Vec<u8>> {
     #[cfg(target_os = "android")]
-    let sevenz_file = ui::android::get_file_from_uri(file_path).ok()?;
+    let sevenz_file = ui::android::get_file_from_uri(file_path)?;
     #[cfg(not(target_os = "android"))]
     let sevenz_file = std::fs::File::open(file_path).ok()?;
     let mut archive =
@@ -208,24 +208,23 @@ fn read_rom_from_7z(file_path: &std::path::PathBuf) -> Option<Vec<u8>> {
     let mut contents = vec![];
     let mut found = false;
     archive
-        .for_each_entries(
-            &mut |entry: &sevenz_rust2::ArchiveEntry, reader: &mut dyn std::io::Read| {
-                if !found
-                    && let Some(extension) = std::path::PathBuf::from(entry.name()).extension()
-                    && let Some(extension) = extension.to_str()
-                    && N64_EXTENSIONS_UNCOMPRESSED.contains(&extension)
-                {
-                    if reader.read_to_end(&mut contents).is_err() {
-                        contents.clear();
-                    }
-                    found = true;
-                } else {
-                    //skip other files
-                    std::io::copy(reader, &mut std::io::sink())?;
+        .for_each_entries(&mut |entry: &sevenz_rust2::ArchiveEntry,
+                                reader: &mut dyn std::io::Read| {
+            if !found
+                && let Some(extension) = std::path::PathBuf::from(entry.name()).extension()
+                && let Some(extension) = extension.to_str()
+                && N64_EXTENSIONS_UNCOMPRESSED.contains(&extension)
+            {
+                if reader.read_to_end(&mut contents).is_err() {
+                    contents.clear();
                 }
-                Ok(true)
-            },
-        )
+                found = true;
+            } else {
+                //skip other files
+                std::io::copy(reader, &mut std::io::sink())?;
+            }
+            Ok(true)
+        })
         .ok()?;
     if contents.is_empty() {
         None
@@ -236,7 +235,7 @@ fn read_rom_from_7z(file_path: &std::path::PathBuf) -> Option<Vec<u8>> {
 
 fn read_rom_from_file(file_path: &std::path::PathBuf) -> Option<Vec<u8>> {
     #[cfg(target_os = "android")]
-    let mut file = ui::android::get_file_from_uri(file_path).ok()?;
+    let mut file = ui::android::get_file_from_uri(file_path)?;
     #[cfg(not(target_os = "android"))]
     let mut file = std::fs::File::open(file_path).ok()?;
     let mut contents = vec![];

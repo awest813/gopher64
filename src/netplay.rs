@@ -120,12 +120,17 @@ fn get_player_numbers(
     player_numbers: &mut std::collections::BTreeMap<usize, Option<matchbox_socket::PeerId>>,
 ) {
     for (peer, data) in channel.receive() {
-        let message = postcard::from_bytes::<NetplayMessage>(&data).unwrap();
+        let Ok(message) = postcard::from_bytes::<NetplayMessage>(&data) else {
+            eprintln!("Ignoring malformed netplay message from peer");
+            continue;
+        };
         if message.name == "player_number" {
-            player_numbers.insert(
-                usize::from_be_bytes(message.data.try_into().unwrap()),
-                Some(peer),
-            );
+            match <[u8; std::mem::size_of::<usize>()]>::try_from(message.data.as_slice()) {
+                Ok(bytes) => {
+                    player_numbers.insert(usize::from_be_bytes(bytes), Some(peer));
+                }
+                Err(_) => eprintln!("Ignoring malformed player_number message from peer"),
+            }
         }
     }
 }
@@ -141,7 +146,13 @@ pub fn send_rtc(netplay: &mut Netplay, rtc: i64) {
 pub fn receive_rtc(netplay: &mut Netplay) -> i64 {
     let message = receive_message(netplay, "rtc");
 
-    i64::from_be_bytes(message.try_into().unwrap())
+    match <[u8; 8]>::try_from(message.as_slice()) {
+        Ok(bytes) => i64::from_be_bytes(bytes),
+        Err(_) => {
+            eprintln!("Received malformed RTC from netplay peer; defaulting to 0");
+            0
+        }
+    }
 }
 
 pub fn send_rng(netplay: &mut Netplay, seed: u64) {
@@ -154,7 +165,13 @@ pub fn send_rng(netplay: &mut Netplay, seed: u64) {
 
 pub fn receive_rng(netplay: &mut Netplay) -> u64 {
     let message = receive_message(netplay, "rng");
-    u64::from_be_bytes(message.try_into().unwrap())
+    match <[u8; 8]>::try_from(message.as_slice()) {
+        Ok(bytes) => u64::from_be_bytes(bytes),
+        Err(_) => {
+            eprintln!("Received malformed RNG seed from netplay peer; defaulting to 0");
+            0
+        }
+    }
 }
 
 pub fn send_save(netplay: &mut Netplay, save_type: &str, save_data: &[u8]) {
