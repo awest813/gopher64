@@ -289,9 +289,7 @@ fn advance_frame(device: &mut device::Device) {
         Err(ggrs::GgrsError::PredictionThreshold) => {
             println!("prediction threshold reached");
         }
-        // Other GGRS errors should not abort the whole emulator; log and skip
-        // advancing this frame so the session can recover or be torn down.
-        Err(e) => eprintln!("Netplay frame advance failed: {e}"),
+        Err(e) => panic!("{e}"),
     }
 }
 
