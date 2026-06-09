@@ -169,7 +169,7 @@ fn swap_rom(contents: Vec<u8>) -> Option<Vec<u8>> {
 
 fn read_rom_from_zip(file_path: &std::path::PathBuf) -> Option<Vec<u8>> {
     #[cfg(target_os = "android")]
-    let zip_file = ui::android::get_file_from_uri(file_path).ok()?;
+    let zip_file = ui::android::get_file_from_uri(file_path)?;
     #[cfg(not(target_os = "android"))]
     let zip_file = std::fs::File::open(file_path).ok()?;
     let mut archive = zip::ZipArchive::new(zip_file).ok()?;
@@ -199,7 +199,7 @@ fn read_rom_from_zip(file_path: &std::path::PathBuf) -> Option<Vec<u8>> {
 
 fn read_rom_from_7z(file_path: &std::path::PathBuf) -> Option<Vec<u8>> {
     #[cfg(target_os = "android")]
-    let sevenz_file = ui::android::get_file_from_uri(file_path).ok()?;
+    let sevenz_file = ui::android::get_file_from_uri(file_path)?;
     #[cfg(not(target_os = "android"))]
     let sevenz_file = std::fs::File::open(file_path).ok()?;
     let mut archive =
@@ -235,7 +235,7 @@ fn read_rom_from_7z(file_path: &std::path::PathBuf) -> Option<Vec<u8>> {
 
 fn read_rom_from_file(file_path: &std::path::PathBuf) -> Option<Vec<u8>> {
     #[cfg(target_os = "android")]
-    let mut file = ui::android::get_file_from_uri(file_path).ok()?;
+    let mut file = ui::android::get_file_from_uri(file_path)?;
     #[cfg(not(target_os = "android"))]
     let mut file = std::fs::File::open(file_path).ok()?;
     let mut contents = vec![];
