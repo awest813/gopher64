@@ -100,7 +100,7 @@ pub fn process(device: &mut device::Device, channel: usize) {
                     offset += 1;
                 }
                 if offset == 40 {
-                    panic!("Empty JCMD_VRU_READ_STATUS.");
+                    eprintln!("Empty VRU word buffer in JCMD_VRU_READ_STATUS");
                 } else if device.vru.word_buffer[offset] == 3 {
                     offset += 3;
                     let mut length = device.vru.word_buffer[offset];
@@ -119,7 +119,7 @@ pub fn process(device: &mut device::Device, channel: usize) {
 
                         let (res, _enc, errors) = encoding_rs::SHIFT_JIS.decode(&data);
                         if errors {
-                            panic!("Failed to decode Japanese word {data:X?}");
+                            eprintln!("Failed to decode Japanese VRU word {data:X?}");
                         } else {
                             device.vru.words.push(res.to_string());
                         }
@@ -137,11 +137,14 @@ pub fn process(device: &mut device::Device, channel: usize) {
                         if let Some(result) = word {
                             device.vru.words.push(result.clone());
                         } else {
-                            panic!("Unknown VRU word {data}");
+                            eprintln!("Unknown VRU word {data}");
                         }
                     }
                 } else {
-                    panic!("Unknown command in JCMD_VRU_READ_STATUS.");
+                    eprintln!(
+                        "Unknown VRU buffer command {:04X} in JCMD_VRU_READ_STATUS",
+                        device.vru.word_buffer[offset]
+                    );
                 }
                 device.vru.load_offset = 0;
             }
@@ -237,7 +240,7 @@ pub fn process(device: &mut device::Device, channel: usize) {
             }
             device.vru.status = 0; /* status is always set to 0 after a write */
         }
-        _ => panic!("unknown VRU command {cmd}"),
+        _ => eprintln!("unknown VRU command {cmd:#x}"),
     }
 }
 

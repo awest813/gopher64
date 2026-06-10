@@ -218,7 +218,8 @@ fn do_dma(device: &mut device::Device, dma: RspDma) {
 
 fn fifo_push(device: &mut device::Device, dir: DmaDir) {
     if device.rsp.regs[SP_DMA_FULL_REG] != 0 {
-        panic!("RSP DMA already full")
+        eprintln!("RSP DMA FIFO full, discarding DMA request");
+        return;
     }
 
     device.rsp.cpu.sync_point = true;

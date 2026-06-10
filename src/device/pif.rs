@@ -55,7 +55,8 @@ pub fn read_mem(
 pub fn write_mem(device: &mut device::Device, address: u64, value: u32, mask: u32) {
     let mut masked_address = address as usize & PIF_MASK;
     if masked_address < PIF_RAM_OFFSET {
-        panic!("write to pif rom")
+        eprintln!("Ignoring write to PIF ROM at {address:#x}");
+        return;
     }
     masked_address -= PIF_RAM_OFFSET;
     let mut data = u32::from_be_bytes(
@@ -362,5 +363,16 @@ fn n64_cic_nus_6105(chl: [u8; 30], rsp: &mut [u8; 30], len: usize) {
         } else {
             lut = &lut0;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pif_rom_write_is_ignored() {
+        let mut device = *crate::device::Device::new(false);
+        let original = device.pif.rom[0..4].to_vec();
+        super::write_mem(&mut device, 0, 0xDEADBEEF, 0xFFFFFFFF);
+        assert_eq!(&device.pif.rom[0..4], original.as_slice());
     }
 }
