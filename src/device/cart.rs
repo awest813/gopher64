@@ -56,7 +56,12 @@ pub struct Cart {
 }
 
 pub fn process(device: &mut device::Device, channel: usize) {
-    let cmd = device.pif.ram[device.pif.channels[channel].tx_buf.unwrap()];
+    let Some((_, rx, tx_buf, rx_buf)) = device.pif.channels[channel].endpoints() else {
+        eprintln!("Skipping cart command on malformed PIF channel {channel}");
+        return;
+    };
+
+    let cmd = device.pif.ram[tx_buf];
 
     match cmd {
         JCMD_RESET | JCMD_STATUS => {
@@ -76,52 +81,26 @@ pub fn process(device: &mut device::Device, channel: usize) {
             {
                 eeprom_type = JDT_EEPROM_4K;
             } else {
-                device.pif.ram[device.pif.channels[channel].rx.unwrap()] |= 0x80;
+                device.pif.ram[rx] |= 0x80;
                 return;
             }
 
-            device.pif.ram[device.pif.channels[channel].rx_buf.unwrap()] = eeprom_type as u8;
-            device.pif.ram[device.pif.channels[channel].rx_buf.unwrap() + 1] =
-                (eeprom_type >> 8) as u8;
-            device.pif.ram[device.pif.channels[channel].rx_buf.unwrap() + 2] = 0;
+            device.pif.ram[rx_buf] = eeprom_type as u8;
+            device.pif.ram[rx_buf + 1] = (eeprom_type >> 8) as u8;
+            device.pif.ram[rx_buf + 2] = 0;
         }
-        JCMD_EEPROM_READ => {
-            eeprom_read_block(
-                device,
-                device.pif.channels[channel].tx_buf.unwrap() + 1,
-                device.pif.channels[channel].rx_buf.unwrap(),
-            );
-        }
-        JCMD_EEPROM_WRITE => eeprom_write_block(
-            device,
-            device.pif.channels[channel].tx_buf.unwrap() + 1,
-            device.pif.channels[channel].tx_buf.unwrap() + 2,
-            device.pif.channels[channel].rx_buf.unwrap(),
-        ),
+        JCMD_EEPROM_READ => eeprom_read_block(device, tx_buf + 1, rx_buf),
+        JCMD_EEPROM_WRITE => eeprom_write_block(device, tx_buf + 1, tx_buf + 2, rx_buf),
         JCMD_AF_RTC_STATUS => {
-            /* set type and status */
-            device.pif.ram[device.pif.channels[channel].rx_buf.unwrap()] = JDT_AF_RTC as u8;
-            device.pif.ram[device.pif.channels[channel].rx_buf.unwrap() + 1] =
-                (JDT_AF_RTC >> 8) as u8;
-            device.pif.ram[device.pif.channels[channel].rx_buf.unwrap() + 2] = 0x00;
+            device.pif.ram[rx_buf] = JDT_AF_RTC as u8;
+            device.pif.ram[rx_buf + 1] = (JDT_AF_RTC >> 8) as u8;
+            device.pif.ram[rx_buf + 2] = 0x00;
         }
-        JCMD_AF_RTC_READ => {
-            af_rtc_read_block(
-                device,
-                device.pif.channels[channel].tx_buf.unwrap() + 1,
-                device.pif.channels[channel].rx_buf.unwrap(),
-                device.pif.channels[channel].rx_buf.unwrap() + 8,
-            );
-        }
-        JCMD_AF_RTC_WRITE => af_rtc_write_block(
-            device,
-            device.pif.channels[channel].tx_buf.unwrap() + 1,
-            device.pif.channels[channel].tx_buf.unwrap() + 2,
-            device.pif.channels[channel].rx_buf.unwrap(),
-        ),
+        JCMD_AF_RTC_READ => af_rtc_read_block(device, tx_buf + 1, rx_buf, rx_buf + 8),
+        JCMD_AF_RTC_WRITE => af_rtc_write_block(device, tx_buf + 1, tx_buf + 2, rx_buf),
         _ => {
             eprintln!("unknown cart command: {cmd:#x}");
-            device.pif.ram[device.pif.channels[channel].rx.unwrap()] |= 0x80;
+            device.pif.ram[rx] |= 0x80;
         }
     }
 }
@@ -160,8 +139,8 @@ fn eeprom_write_block(device: &mut device::Device, block: usize, offset: usize, 
 fn time2data(device: &mut device::Device, offset: usize) {
     let timestamp = device.cart.rtc_timestamp + device.vi.elapsed_time as i64;
     let now = chrono::DateTime::from_timestamp(timestamp, 0)
-        .unwrap()
-        .with_timezone(&chrono::Local);
+        .map(|dt| dt.with_timezone(&chrono::Local))
+        .unwrap_or_else(chrono::Local::now);
 
     device.pif.ram[offset] = byte2bcd(now.second());
     device.pif.ram[offset + 1] = byte2bcd(now.minute());
@@ -263,7 +242,7 @@ fn af_rtc_write_block(device: &mut device::Device, block: usize, offset: usize, 
 
 #[cfg(test)]
 mod tests {
-    use super::{bcd2byte, byte2bcd, is_valid_bcd};
+    use super::{bcd2byte, byte2bcd, is_valid_bcd, JCMD_STATUS};
 
     #[test]
     fn byte2bcd_roundtrip() {
@@ -314,5 +293,17 @@ mod tests {
         device.cart.rtc.control = 0x01;
         super::af_rtc_write_block(&mut device, 0, 1, 9);
         assert_eq!(device.cart.rtc.block1, [0; 8]);
+    }
+
+    #[test]
+    fn malformed_cart_channel_is_skipped() {
+        let mut device = *crate::device::Device::new(false);
+        device.pif.channels[4].tx = Some(0);
+        device.pif.channels[4].tx_buf = Some(2);
+        device.pif.ram[2] = JCMD_STATUS;
+
+        super::process(&mut device, 4);
+
+        assert_eq!(device.pif.ram[0] & 0x80, 0);
     }
 }

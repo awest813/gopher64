@@ -67,14 +67,15 @@ pub fn process(device: &mut device::Device, channel: usize) {
             if input.pak_change_pressed {
                 // pak change button pressed
                 if device::events::get_event(device, device::events::EVENT_TYPE_PAK).is_none() {
-                    device.pif.channels[channel].change_pak =
-                        device.pif.channels[channel].pak_handler.unwrap().pak_type;
-                    device.pif.channels[channel].pak_handler = None;
-                    device::events::create_event(
-                        device,
-                        device::events::EVENT_TYPE_PAK,
-                        device.cpu.clock_rate / 2, // 500ms
-                    )
+                    if let Some(handler) = device.pif.channels[channel].pak_handler {
+                        device.pif.channels[channel].change_pak = handler.pak_type;
+                        device.pif.channels[channel].pak_handler = None;
+                        device::events::create_event(
+                            device,
+                            device::events::EVENT_TYPE_PAK,
+                            device.cpu.clock_rate / 2, // 500ms
+                        )
+                    }
                 }
             }
         }
