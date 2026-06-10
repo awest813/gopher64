@@ -654,9 +654,6 @@ pub fn cfc2(device: &mut device::Device, opcode: u32) {
             hi = &zero;
             lo = &device.rsp.cpu.vce;
         }
-        _ => {
-            panic!("unknown cfc2")
-        }
     }
 
     unsafe {
@@ -697,9 +694,6 @@ pub fn ctc2(device: &mut device::Device, opcode: u32) {
         0x02 | 0x03 => {
             hi = &mut zero;
             lo = &mut device.rsp.cpu.vce;
-        }
-        _ => {
-            panic!("unknown ctc2")
         }
     }
 

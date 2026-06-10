@@ -15,8 +15,14 @@ pub struct MatchboxSocket(matchbox_socket::WebRtcSocket);
 
 impl ggrs::NonBlockingSocket<matchbox_socket::PeerId> for MatchboxSocket {
     fn send_to(&mut self, msg: &ggrs::Message, addr: &matchbox_socket::PeerId) {
-        let encoded = postcard::to_stdvec(msg).expect("serialization failed");
-        let channel = self.0.get_channel_mut(0).unwrap();
+        let Ok(encoded) = postcard::to_stdvec(msg) else {
+            eprintln!("Failed to serialize GGRS message");
+            return;
+        };
+        let Some(channel) = self.0.get_channel_mut(0) else {
+            eprintln!("GGRS channel unavailable for send");
+            return;
+        };
         if channel.config().max_retransmits != Some(0) || channel.config().ordered {
             eprintln!("Sending GGRS traffic over reliable channel");
         }
@@ -24,7 +30,9 @@ impl ggrs::NonBlockingSocket<matchbox_socket::PeerId> for MatchboxSocket {
     }
 
     fn receive_all_messages(&mut self) -> Vec<(matchbox_socket::PeerId, ggrs::Message)> {
-        let channel = self.0.get_channel_mut(0).unwrap();
+        let Some(channel) = self.0.get_channel_mut(0) else {
+            return Vec::new();
+        };
         channel
             .receive()
             .iter()
@@ -54,8 +62,20 @@ struct NetplayMessage {
     data: Vec<u8>,
 }
 
+fn serialize_netplay_message(message: &NetplayMessage) -> Option<Vec<u8>> {
+    match postcard::to_stdvec(message) {
+        Ok(data) => Some(data),
+        Err(err) => {
+            eprintln!("Failed to serialize netplay message: {err}");
+            None
+        }
+    }
+}
+
 fn send_message(netplay: &mut Netplay, message: NetplayMessage) {
-    let data = postcard::to_stdvec(&message).unwrap();
+    let Some(data) = serialize_netplay_message(&message) else {
+        return;
+    };
     let chunks = data.chunks(16384).collect::<Vec<&[u8]>>();
     for peer in netplay.peers.iter() {
         for chunk in chunks.iter() {
@@ -94,7 +114,8 @@ fn receive_message(netplay: &mut Netplay, name: &str) -> Vec<u8> {
         }
 
         if now.elapsed() > timeout {
-            panic!("Could not receive message for {name}");
+            eprintln!("Timed out waiting for netplay message: {name}");
+            return Vec::new();
         }
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
@@ -109,7 +130,9 @@ fn send_player_number(
         name: "player_number".to_string(),
         data: player_number.to_be_bytes().to_vec(),
     };
-    let data = postcard::to_stdvec(&message).unwrap();
+    let Some(data) = serialize_netplay_message(&message) else {
+        return;
+    };
     for peer in peers {
         channel.send(data.clone().into(), peer);
     }
@@ -216,7 +239,11 @@ pub fn process_requests(
                     for reg in device.cpu.cop0.regs.as_ref() {
                         hasher.update(reg.to_be_bytes());
                     }
-                    let hash = u128::from_be_bytes(hasher.finalize()[..16].try_into().unwrap());
+                    let hash = u128::from_be_bytes(
+                        hasher.finalize()[..16]
+                            .try_into()
+                            .unwrap_or([0; 16]),
+                    );
                     cell.save(frame, Some(frame), Some(hash));
                 }
                 ggrs::GgrsRequest::LoadGameState { cell, frame: _ } => {
@@ -277,11 +304,18 @@ pub fn process_netplay(
 fn advance_frame(device: &mut device::Device) {
     let netplay = device.netplay.as_mut().unwrap();
     let local_input = ui::input::get(&mut device.ui, 0, device.frame_counter);
-    let local_handle = *netplay.session.local_player_handles().first().unwrap();
-    netplay
+    let Some(local_handle) = netplay.session.local_player_handles().first() else {
+        eprintln!("Netplay session has no local player handle");
+        return;
+    };
+    if netplay
         .session
-        .add_local_input(local_handle, local_input)
-        .unwrap();
+        .add_local_input(*local_handle, local_input)
+        .is_err()
+    {
+        eprintln!("Failed to add local netplay input");
+        return;
+    }
     match netplay.session.advance_frame() {
         Ok(requests) => {
             netplay.requests.extend(requests);
@@ -289,7 +323,9 @@ fn advance_frame(device: &mut device::Device) {
         Err(ggrs::GgrsError::PredictionThreshold) => {
             println!("prediction threshold reached");
         }
-        Err(e) => panic!("{e}"),
+        Err(e) => {
+            eprintln!("Netplay advance_frame error: {e}");
+        }
     }
 }
 
@@ -311,7 +347,13 @@ pub fn init(
         }
     });
     let mut matchbox_socket = MatchboxSocket(socket);
-    let mut reliable_channel = matchbox_socket.0.take_channel(1).unwrap();
+    let mut reliable_channel = match matchbox_socket.0.take_channel(1) {
+        Some(channel) => channel,
+        None => {
+            eprintln!("Netplay reliable channel unavailable");
+            return None;
+        }
+    };
     let now = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(10);
     let mut player_numbers = std::collections::BTreeMap::new();
@@ -336,29 +378,57 @@ pub fn init(
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
-    let mut session_builder = ggrs::SessionBuilder::<GgrsConfig>::new()
+    let mut session_builder = match ggrs::SessionBuilder::<GgrsConfig>::new()
         .with_num_players(number_of_players)
-        .unwrap()
-        .with_input_delay(input_delay)
-        .with_fps(if pal { 50 } else { 60 })
-        .unwrap()
-        .with_desync_detection_mode(ggrs::DesyncDetection::On { interval: 60 });
+    {
+        Ok(builder) => builder,
+        Err(err) => {
+            eprintln!("Failed to configure netplay session: {err}");
+            return None;
+        }
+    };
+    session_builder = session_builder.with_input_delay(input_delay);
+    session_builder = match session_builder.with_fps(if pal { 50 } else { 60 }) {
+        Ok(builder) => builder,
+        Err(err) => {
+            eprintln!("Failed to set netplay FPS: {err}");
+            return None;
+        }
+    };
+    session_builder = session_builder.with_desync_detection_mode(ggrs::DesyncDetection::On {
+        interval: 60,
+    });
 
     let mut peers = vec![];
     for (i, peer) in player_numbers.iter() {
         if let Some(peer) = peer {
-            session_builder = session_builder
-                .add_player(ggrs::PlayerType::Remote(*peer), *i)
-                .unwrap();
+            session_builder = match session_builder.add_player(ggrs::PlayerType::Remote(*peer), *i)
+            {
+                Ok(builder) => builder,
+                Err(err) => {
+                    eprintln!("Failed to add remote netplay player: {err}");
+                    return None;
+                }
+            };
             peers.push(*peer);
         } else {
-            session_builder = session_builder
-                .add_player(ggrs::PlayerType::Local, *i)
-                .unwrap();
+            session_builder = match session_builder.add_player(ggrs::PlayerType::Local, *i) {
+                Ok(builder) => builder,
+                Err(err) => {
+                    eprintln!("Failed to add local netplay player: {err}");
+                    return None;
+                }
+            };
         }
     }
 
-    let mut session = session_builder.start_p2p_session(matchbox_socket).unwrap();
+    let mut session = match session_builder.start_p2p_session(matchbox_socket) {
+        Ok(session) => session,
+        Err(err) => {
+            eprintln!("Failed to start netplay session: {err}");
+            return None;
+        }
+    };
 
     let now = std::time::Instant::now();
     while session.current_state() != ggrs::SessionState::Running {

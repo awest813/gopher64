@@ -39,56 +39,58 @@ pub struct PakHandler {
 }
 
 pub fn process(device: &mut device::Device, channel: usize) {
-    let cmd = device.pif.ram[device.pif.channels[channel].tx_buf.unwrap()];
+    let Some((tx_buf, rx_buf)) = device.pif.channels[channel].buffers() else {
+        eprintln!("Skipping controller command on malformed PIF channel {channel}");
+        return;
+    };
+
+    let cmd = device.pif.ram[tx_buf];
 
     match cmd {
         JCMD_RESET | JCMD_STATUS => {
-            device.pif.ram[device.pif.channels[channel].rx_buf.unwrap()] = CONT_FLAVOR as u8;
-            device.pif.ram[device.pif.channels[channel].rx_buf.unwrap() + 1] =
-                (CONT_FLAVOR >> 8) as u8;
+            device.pif.ram[rx_buf] = CONT_FLAVOR as u8;
+            device.pif.ram[rx_buf + 1] = (CONT_FLAVOR >> 8) as u8;
             if device.pif.channels[channel].pak_handler.is_none() {
-                device.pif.ram[device.pif.channels[channel].rx_buf.unwrap() + 2] =
-                    CONT_STATUS_PAK_NOT_PRESENT;
+                device.pif.ram[rx_buf + 2] = CONT_STATUS_PAK_NOT_PRESENT;
             } else {
-                device.pif.ram[device.pif.channels[channel].rx_buf.unwrap() + 2] =
-                    CONT_STATUS_PAK_PRESENT;
+                device.pif.ram[rx_buf + 2] = CONT_STATUS_PAK_PRESENT;
             }
         }
         JCMD_CONTROLLER_READ => {
-            let offset = device.pif.channels[channel].rx_buf.unwrap();
             let input = if let Some(netplay) = &mut device.netplay {
                 netplay.inputs[channel].0
             } else {
                 ui::input::get(&mut device.ui, channel, device.frame_counter)
             };
 
-            device.pif.ram[offset..offset + 4].copy_from_slice(&input.data.to_ne_bytes());
+            device.pif.ram[rx_buf..rx_buf + 4].copy_from_slice(&input.data.to_ne_bytes());
             if input.pak_change_pressed {
                 // pak change button pressed
                 if device::events::get_event(device, device::events::EVENT_TYPE_PAK).is_none() {
-                    device.pif.channels[channel].change_pak =
-                        device.pif.channels[channel].pak_handler.unwrap().pak_type;
-                    device.pif.channels[channel].pak_handler = None;
-                    device::events::create_event(
-                        device,
-                        device::events::EVENT_TYPE_PAK,
-                        device.cpu.clock_rate / 2, // 500ms
-                    )
+                    if let Some(handler) = device.pif.channels[channel].pak_handler {
+                        device.pif.channels[channel].change_pak = handler.pak_type;
+                        device.pif.channels[channel].pak_handler = None;
+                        device::events::create_event(
+                            device,
+                            device::events::EVENT_TYPE_PAK,
+                            device.cpu.clock_rate / 2, // 500ms
+                        )
+                    }
                 }
             }
         }
         JCMD_PAK_READ => pak_read_block(
             device,
-            device.pif.channels[channel].tx_buf.unwrap() + 1,
-            device.pif.channels[channel].rx_buf.unwrap(),
-            device.pif.channels[channel].rx_buf.unwrap() + 32,
+            tx_buf + 1,
+            rx_buf,
+            rx_buf + 32,
             channel,
         ),
         JCMD_PAK_WRITE => pak_write_block(
             device,
-            device.pif.channels[channel].tx_buf.unwrap() + 1,
-            device.pif.channels[channel].tx_buf.unwrap() + 3,
-            device.pif.channels[channel].rx_buf.unwrap(),
+            tx_buf + 1,
+            tx_buf + 3,
+            rx_buf,
             channel,
         ),
         _ => eprintln!("unknown controller command {cmd}"),
@@ -178,8 +180,13 @@ pub fn pak_switch_event(device: &mut device::Device) {
                 _ => {
                     eprintln!("Invalid pak type cycle state: {:?}", channel.change_pak);
                     channel.change_pak = PakType::None;
+                    PakType::None
                 }
             };
+
+            if new_pak_type == PakType::None {
+                continue;
+            }
 
             if new_pak_type == PakType::MemPak {
                 channel.pak_handler = Some(device::controller::PakHandler {

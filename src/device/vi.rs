@@ -113,7 +113,9 @@ pub fn write_regs(device: &mut device::Device, address: u64, value: u32, mask: u
                 if device.netplay.is_none() {
                     savestates::process_savestates(device);
                 }
-                let _ = device.ui.video.fps_tx.as_ref().unwrap().try_send(true);
+                if let Some(fps_tx) = device.ui.video.fps_tx.as_ref() {
+                    let _ = fps_tx.try_send(true);
+                }
             }
         }
         _ => {
@@ -133,7 +135,9 @@ pub fn vertical_interrupt_event(device: &mut device::Device) {
     if !netplay::netplay_in_rollback(device.netplay.as_ref()) {
         ui::video::render_frame();
     }
-    let _ = device.ui.video.vis_tx.as_ref().unwrap().try_send(true);
+    if let Some(vis_tx) = device.ui.video.vis_tx.as_ref() {
+        let _ = vis_tx.try_send(true);
+    }
 
     retroachievements::do_frame();
 
@@ -164,12 +168,19 @@ pub fn vertical_interrupt_event(device: &mut device::Device) {
     }
     device.frame_counter += 1;
 
-    if let Some(netplay) = &device.netplay {
-        device.netplay.as_mut().unwrap().inputs = if netplay.requests.is_empty() {
+    if device.netplay.is_some() {
+        let process_now = device
+            .netplay
+            .as_ref()
+            .is_some_and(|netplay| netplay.requests.is_empty());
+        let inputs = if process_now {
             netplay::process_netplay(device)
         } else {
             netplay::process_requests(device)
         };
+        if let Some(netplay) = device.netplay.as_mut() {
+            netplay.inputs = inputs;
+        }
     }
 
     if device.netplay.is_none() && paused {

@@ -1,4 +1,5 @@
 use crate::device;
+use crate::device::rdram_init;
 use crate::retroachievements;
 use crate::ui;
 use std::alloc::{Layout, alloc_zeroed};
@@ -88,17 +89,26 @@ pub fn write_mem(device: &mut device::Device, address: u64, value: u32, mask: u3
 
 pub fn write_mem_repeat(device: &mut device::Device, address: u64, value: u32, mask: u32) {
     if mask != 0xFFFFFFFF {
-        panic!("RDRAM write_mem_repeat called with mask {:#x}", mask);
+        eprintln!("RDRAM write_mem_repeat called with mask {mask:#x}; ignoring");
+        return;
     }
 
     let repeat_length =
         (device.mi.regs[device::mi::MI_INIT_MODE_REG] & device::mi::MI_INIT_LENGTH_MASK) + 1;
 
     if !repeat_length.is_multiple_of(4) {
-        panic!(
-            "RDRAM write_mem_repeat called with non-word-aligned length {}",
-            repeat_length
+        eprintln!(
+            "RDRAM write_mem_repeat called with non-word-aligned length {repeat_length}; ignoring"
         );
+        return;
+    }
+
+    let end = address as usize + repeat_length as usize;
+    if end > device.rdram.mem.len() {
+        eprintln!(
+            "RDRAM write_mem_repeat out of bounds at {address:#x} length {repeat_length}; ignoring"
+        );
+        return;
     }
 
     ui::video::check_framebuffers(address as u32, repeat_length);
@@ -153,23 +163,7 @@ pub fn init(device: &mut device::Device) {
 
     retroachievements::set_rdram(device.rdram.mem.as_ptr(), device.rdram.size as usize);
 
-    // hack, skip RDRAM initialization
-    device
-        .rdram
-        .mem
-        .get_mut(0x318..0x318 + 4)
-        .unwrap_or(&mut [0; 4])
-        .copy_from_slice(&device.rdram.size.to_ne_bytes());
-    // hack, skip RDRAM initialization
-    device
-        .rdram
-        .mem
-        .get_mut(0x3f0..0x3f0 + 4)
-        .unwrap_or(&mut [0; 4])
-        .copy_from_slice(&device.rdram.size.to_ne_bytes());
-
-    device.ri.regs[device::ri::RI_MODE_REG] = 0x0e;
-    device.ri.regs[device::ri::RI_CONFIG_REG] = 0x40;
+    rdram_init::init_registers(device);
 }
 
 pub fn rdram_calculate_cycles(length: u64) -> u64 {

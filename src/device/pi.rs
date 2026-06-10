@@ -185,7 +185,11 @@ pub fn calculate_cycles(device: &mut device::Device, domain: i32, length: u32) -
         release = (device.pi.regs[PI_BSD_DOM2_RLS_REG] + 1) as f64;
         page_size = page_size_base.powf((device.pi.regs[PI_BSD_DOM2_PGS_REG] + 2) as f64);
     } else {
-        panic!("unknown pi dma")
+        eprintln!("unknown PI DMA domain {domain}, using domain 1 timing");
+        latency = (device.pi.regs[PI_BSD_DOM1_LAT_REG] + 1) as f64;
+        pulse_width = (device.pi.regs[PI_BSD_DOM1_PWD_REG] + 1) as f64;
+        release = (device.pi.regs[PI_BSD_DOM1_RLS_REG] + 1) as f64;
+        page_size = page_size_base.powf((device.pi.regs[PI_BSD_DOM1_PGS_REG] + 2) as f64);
     }
     pages = (length as f64 / page_size).ceil();
 
@@ -228,4 +232,16 @@ fn unknown_dma_write(
             .unwrap_or(&mut 0) = 0;
     }
     device::pi::calculate_cycles(device, 1, length)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::calculate_cycles;
+
+    #[test]
+    fn unknown_pi_domain_does_not_panic() {
+        let mut device = *crate::device::Device::new(false);
+        let cycles = calculate_cycles(&mut device, 99, 64);
+        assert!(cycles > 0);
+    }
 }

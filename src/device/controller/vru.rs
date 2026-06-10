@@ -47,7 +47,7 @@ fn reset_vru(device: &mut device::Device) {
     device.vru.word_buffer = [0; 40];
 }
 
-fn set_status(device: &mut device::Device, channel: usize) {
+fn set_status(device: &mut device::Device, rx_buf: usize) {
     if device.vru.voice_init == 2 {
         /* words have been loaded, we can change the state from READY to START */
         device.vru.voice_state = VOICE_STATUS_START;
@@ -61,38 +61,37 @@ fn set_status(device: &mut device::Device, channel: usize) {
         device.vru.status = 0; /* setting the status to 0 tells the game to check the voice_status */
     }
 
-    device.pif.ram[device.pif.channels[channel].rx_buf.unwrap()] = CONT_FLAVOR as u8;
-    device.pif.ram[device.pif.channels[channel].rx_buf.unwrap() + 1] = (CONT_FLAVOR >> 8) as u8;
-    device.pif.ram[device.pif.channels[channel].rx_buf.unwrap() + 2] = device.vru.status;
+    device.pif.ram[rx_buf] = CONT_FLAVOR as u8;
+    device.pif.ram[rx_buf + 1] = (CONT_FLAVOR >> 8) as u8;
+    device.pif.ram[rx_buf + 2] = device.vru.status;
 }
 
 pub fn process(device: &mut device::Device, channel: usize) {
-    let cmd = device.pif.ram[device.pif.channels[channel].tx_buf.unwrap()];
+    let Some((_, _, tx_buf, rx_buf)) = device.pif.channels[channel].endpoints() else {
+        eprintln!("Skipping VRU command on malformed PIF channel {channel}");
+        return;
+    };
+
+    let cmd = device.pif.ram[tx_buf];
 
     match cmd {
         device::controller::JCMD_RESET => {
             reset_vru(device);
 
-            set_status(device, channel);
+            set_status(device, rx_buf);
         }
         device::controller::JCMD_STATUS => {
-            set_status(device, channel);
+            set_status(device, rx_buf);
         }
         device::controller::JCMD_CONTROLLER_READ => {}
         JCMD_VRU_READ_STATUS => {
             if device.vru.voice_init > 0 {
-                device.pif.ram[device.pif.channels[channel].rx_buf.unwrap()] =
-                    device.vru.voice_state;
+                device.pif.ram[rx_buf] = device.vru.voice_state;
             } else {
-                device.pif.ram[device.pif.channels[channel].rx_buf.unwrap()] = 0;
+                device.pif.ram[rx_buf] = 0;
             }
-            device.pif.ram[device.pif.channels[channel].rx_buf.unwrap() + 1] = 0;
-            device.pif.ram[device.pif.channels[channel].rx_buf.unwrap() + 2] =
-                device::controller::data_crc(
-                    device,
-                    device.pif.channels[channel].rx_buf.unwrap(),
-                    2,
-                );
+            device.pif.ram[rx_buf + 1] = 0;
+            device.pif.ram[rx_buf + 2] = device::controller::data_crc(device, rx_buf, 2);
 
             if device.vru.load_offset > 0 {
                 let mut offset = 0;
@@ -100,7 +99,7 @@ pub fn process(device: &mut device::Device, channel: usize) {
                     offset += 1;
                 }
                 if offset == 40 {
-                    panic!("Empty JCMD_VRU_READ_STATUS.");
+                    eprintln!("Empty VRU word buffer in JCMD_VRU_READ_STATUS");
                 } else if device.vru.word_buffer[offset] == 3 {
                     offset += 3;
                     let mut length = device.vru.word_buffer[offset];
@@ -119,7 +118,7 @@ pub fn process(device: &mut device::Device, channel: usize) {
 
                         let (res, _enc, errors) = encoding_rs::SHIFT_JIS.decode(&data);
                         if errors {
-                            panic!("Failed to decode Japanese word {data:X?}");
+                            eprintln!("Failed to decode Japanese VRU word {data:X?}");
                         } else {
                             device.vru.words.push(res.to_string());
                         }
@@ -137,24 +136,23 @@ pub fn process(device: &mut device::Device, channel: usize) {
                         if let Some(result) = word {
                             device.vru.words.push(result.clone());
                         } else {
-                            panic!("Unknown VRU word {data}");
+                            eprintln!("Unknown VRU word {data}");
                         }
                     }
                 } else {
-                    panic!("Unknown command in JCMD_VRU_READ_STATUS.");
+                    eprintln!(
+                        "Unknown VRU buffer command {:04X} in JCMD_VRU_READ_STATUS",
+                        device.vru.word_buffer[offset]
+                    );
                 }
                 device.vru.load_offset = 0;
             }
             device.vru.status = 1;
         }
         JCMD_VRU_WRITE_CONFIG => {
-            device.pif.ram[device.pif.channels[channel].rx_buf.unwrap()] =
-                device::controller::data_crc(
-                    device,
-                    device.pif.channels[channel].tx_buf.unwrap() + 3,
-                    4,
-                );
-            if device.pif.ram[device.pif.channels[channel].rx_buf.unwrap()] == 0x4E {
+            device.pif.ram[rx_buf] =
+                device::controller::data_crc(device, tx_buf + 3, 4);
+            if device.pif.ram[rx_buf] == 0x4E {
                 device.vru.talking = true;
                 device.vru.voice_init = 2;
                 device::events::create_event(
@@ -162,22 +160,22 @@ pub fn process(device: &mut device::Device, channel: usize) {
                     device::events::EVENT_TYPE_VRU,
                     device.cpu.clock_rate * 2, // 2 seconds
                 )
-            } else if device.pif.ram[device.pif.channels[channel].rx_buf.unwrap()] == 0xEF {
+            } else if device.pif.ram[rx_buf] == 0xEF {
                 device.vru.talking = false;
                 device::events::remove_event(device, device::events::EVENT_TYPE_VRU);
-            } else if device.pif.ram[device.pif.channels[channel].tx_buf.unwrap() + 3] == 0x2 {
+            } else if device.pif.ram[tx_buf + 3] == 0x2 {
                 device.vru.voice_init = 0;
                 device.vru.words.clear();
             }
             device.vru.status = 0; /* status is always set to 0 after a write */
         }
         JCMD_VRU_WRITE_INIT => {
-            let offset = device.pif.channels[channel].tx_buf.unwrap() + 1;
-            if u16::from_ne_bytes(device.pif.ram[offset..offset + 2].try_into().unwrap()) == 0 {
+            let offset = tx_buf + 1;
+            if device::memory::read_u16_le_at(&device.pif.ram, offset) == 0 {
                 device.vru.talking = false;
                 device::events::remove_event(device, device::events::EVENT_TYPE_VRU);
             }
-            device.pif.ram[device.pif.channels[channel].rx_buf.unwrap()] = 0;
+            device.pif.ram[rx_buf] = 0;
         }
         JCMD_VRU_READ => {
             #[cfg(all(feature = "gui", not(target_os = "android")))]
@@ -206,38 +204,28 @@ pub fn process(device: &mut device::Device, channel: usize) {
                 (34, 0x0040),
             ]);
             for (key, value) in data {
-                let offset = device.pif.channels[channel].rx_buf.unwrap() + key;
+                let offset = rx_buf + key;
                 device.pif.ram[offset..offset + 2].copy_from_slice(&value.to_ne_bytes());
             }
 
-            device.pif.ram[device.pif.channels[channel].rx_buf.unwrap() + 36] =
-                device::controller::data_crc(
-                    device,
-                    device.pif.channels[channel].rx_buf.unwrap(),
-                    36,
-                );
+            device.pif.ram[rx_buf + 36] = device::controller::data_crc(device, rx_buf, 36);
 
             device.vru.voice_state = VOICE_STATUS_START;
         }
         JCMD_VRU_WRITE => {
-            device.pif.ram[device.pif.channels[channel].rx_buf.unwrap()] =
-                device::controller::data_crc(
-                    device,
-                    device.pif.channels[channel].tx_buf.unwrap() + 3,
-                    20,
-                );
+            device.pif.ram[rx_buf] = device::controller::data_crc(device, tx_buf + 3, 20);
             if device.vru.load_offset == 0 {
                 device.vru.word_buffer = [0; 40];
             }
             for i in 0..10 {
-                let offset = device.pif.channels[channel].tx_buf.unwrap() + 3 + (i * 2);
+                let offset = tx_buf + 3 + (i * 2);
                 device.vru.word_buffer[device.vru.load_offset as usize] =
-                    u16::from_ne_bytes(device.pif.ram[offset..offset + 2].try_into().unwrap());
+                    device::memory::read_u16_le_at(&device.pif.ram, offset);
                 device.vru.load_offset += 1;
             }
             device.vru.status = 0; /* status is always set to 0 after a write */
         }
-        _ => panic!("unknown VRU command {cmd}"),
+        _ => eprintln!("unknown VRU command {cmd:#x}"),
     }
 }
 
@@ -2727,4 +2715,21 @@ fn create_word_mappings(device: &mut device::Device) {
             String::from("take-that"),
         ),
     ]);
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn malformed_vru_channel_is_skipped() {
+        let mut device = *crate::device::Device::new(false);
+        device.pif.channels[0].tx = Some(0);
+        device.pif.channels[0].rx = Some(1);
+        device.pif.channels[0].tx_buf = None;
+        device.pif.channels[0].rx_buf = Some(32);
+        device.pif.ram[0] = super::JCMD_VRU_READ_STATUS;
+
+        super::process(&mut device, 0);
+
+        assert_eq!(device.pif.ram[32], 0);
+    }
 }

@@ -22,6 +22,20 @@ pub struct PifChannel {
     pub change_pak: device::controller::PakType,
 }
 
+impl PifChannel {
+    pub(crate) fn tx_rx(&self) -> Option<(usize, usize)> {
+        Some((self.tx?, self.rx?))
+    }
+
+    pub(crate) fn buffers(&self) -> Option<(usize, usize)> {
+        Some((self.tx_buf?, self.rx_buf?))
+    }
+
+    pub(crate) fn endpoints(&self) -> Option<(usize, usize, usize, usize)> {
+        Some((self.tx?, self.rx?, self.tx_buf?, self.rx_buf?))
+    }
+}
+
 pub const PIF_RAM_SIZE: usize = 64;
 const PIF_CHANNELS_COUNT: usize = 5;
 const PIF_RAM_OFFSET: usize = 0x7C0;
@@ -37,34 +51,23 @@ pub fn read_mem(
 
     let mut masked_address = address as usize & PIF_MASK;
     if masked_address < PIF_RAM_OFFSET {
-        u32::from_be_bytes(
-            device.pif.rom[masked_address..masked_address + 4]
-                .try_into()
-                .unwrap(),
-        )
+        device::memory::read_u32_be_at(&device.pif.rom, masked_address)
     } else {
         masked_address -= PIF_RAM_OFFSET;
-        u32::from_be_bytes(
-            device.pif.ram[masked_address..masked_address + 4]
-                .try_into()
-                .unwrap(),
-        )
+        device::memory::read_u32_be_at(&device.pif.ram, masked_address)
     }
 }
 
 pub fn write_mem(device: &mut device::Device, address: u64, value: u32, mask: u32) {
     let mut masked_address = address as usize & PIF_MASK;
     if masked_address < PIF_RAM_OFFSET {
-        panic!("write to pif rom")
+        eprintln!("Ignoring write to PIF ROM at {address:#x}");
+        return;
     }
     masked_address -= PIF_RAM_OFFSET;
-    let mut data = u32::from_be_bytes(
-        device.pif.ram[masked_address..masked_address + 4]
-            .try_into()
-            .unwrap(),
-    );
+    let mut data = device::memory::read_u32_be_at(&device.pif.ram, masked_address);
     device::memory::masked_write_32(&mut data, value, mask);
-    device.pif.ram[masked_address..masked_address + 4].copy_from_slice(&data.to_be_bytes());
+    device::memory::write_u32_be_at(&mut device.pif.ram, masked_address, data);
 
     device.si.dma_dir = device::si::DmaDir::Write;
     device::events::create_event(device, device::events::EVENT_TYPE_SI, 3200); //based on https://github.com/rasky/n64-systembench
@@ -78,18 +81,21 @@ fn process_channel(device: &mut device::Device, channel: usize) -> usize {
         return 0;
     }
 
+    let Some((tx, rx)) = device.pif.channels[channel].tx_rx() else {
+        eprintln!("Malformed PIF channel {channel}: missing tx/rx pointers");
+        return 0;
+    };
+
     /* reset Tx/Rx just in case */
-    device.pif.ram[device.pif.channels[channel].tx.unwrap()] &= 0x3f;
-    device.pif.ram[device.pif.channels[channel].rx.unwrap()] &= 0x3f;
+    device.pif.ram[tx] &= 0x3f;
+    device.pif.ram[rx] &= 0x3f;
 
     /* set NoResponse if no device is connected */
-    if device.pif.channels[channel].process.is_none() {
-        device.pif.ram[device.pif.channels[channel].rx.unwrap()] |= 0x80;
+    let Some(process_handler) = device.pif.channels[channel].process else {
+        device.pif.ram[rx] |= 0x80;
         return 0;
-    }
+    };
 
-    /* do device processing */
-    let process_handler = device.pif.channels[channel].process.unwrap();
     process_handler(device, channel);
     1
 }
@@ -362,5 +368,51 @@ fn n64_cic_nus_6105(chl: [u8; 30], rsp: &mut [u8; 30], len: usize) {
         } else {
             lut = &lut0;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pif_rom_write_is_ignored() {
+        let mut device = *crate::device::Device::new(false);
+        let original = device.pif.rom[0..4].to_vec();
+        super::write_mem(&mut device, 0, 0xDEADBEEF, 0xFFFFFFFF);
+        assert_eq!(&device.pif.rom[0..4], original.as_slice());
+    }
+
+    #[test]
+    fn malformed_pif_channel_is_skipped() {
+        let mut device = *crate::device::Device::new(false);
+        device.pif.channels[0].tx = Some(0);
+        device.pif.channels[0].rx = None;
+        device.pif.ram[0] = 0x01;
+
+        let active = super::update_pif_ram(&mut device);
+
+        assert_eq!(active, 0);
+    }
+
+    #[test]
+    fn pif_ram_read_uses_zero_fill_for_short_slice() {
+        let mut device = *crate::device::Device::new(false);
+        let value = super::read_mem(
+            &mut device,
+            (super::PIF_RAM_OFFSET + super::PIF_RAM_SIZE - 2) as u64,
+            crate::device::memory::AccessSize::Word,
+        );
+        assert_eq!(value, 0);
+    }
+
+    #[test]
+    fn pif_ram_write_is_bounds_safe() {
+        let mut device = *crate::device::Device::new(false);
+        super::write_mem(
+            &mut device,
+            (super::PIF_RAM_OFFSET + super::PIF_RAM_SIZE - 2) as u64,
+            0xDEAD_BEEF,
+            0xFFFF_FFFF,
+        );
+        assert_eq!(device::memory::read_u32_be_at(&device.pif.ram, super::PIF_RAM_SIZE), 0);
     }
 }

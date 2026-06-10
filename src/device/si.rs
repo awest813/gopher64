@@ -35,7 +35,12 @@ pub fn read_regs(
     _access_size: device::memory::AccessSize,
 ) -> u32 {
     device::cop0::add_cycles(device, 20);
-    device.si.regs[((address & 0xFFFF) >> 2) as usize]
+    let reg = ((address & 0xFFFF) >> 2) as usize;
+    if reg >= SI_REGS_COUNT {
+        eprintln!("Unknown SI register read {reg} at {address:#x}");
+        return 0;
+    }
+    device.si.regs[reg]
 }
 
 fn randomize_interrupt_time(rng: &mut rand::rngs::Xoshiro256PlusPlus) -> u64 {
@@ -67,15 +72,19 @@ fn dma_write(device: &mut device::Device) {
 }
 
 pub fn write_regs(device: &mut device::Device, address: u64, value: u32, mask: u32) {
-    let reg = (address & 0xFFFF) >> 2;
-    match reg as usize {
+    let reg = ((address & 0xFFFF) >> 2) as usize;
+    if reg >= SI_REGS_COUNT {
+        eprintln!("Unknown SI register write {reg} at {address:#x}");
+        return;
+    }
+    match reg {
         SI_STATUS_REG => {
-            device.si.regs[reg as usize] &= !SI_STATUS_INTERRUPT;
+            device.si.regs[reg] &= !SI_STATUS_INTERRUPT;
             device::mi::clear_rcp_interrupt(device, device::mi::MI_INTR_SI)
         }
         SI_PIF_ADDR_RD64B_REG => dma_read(device),
         SI_PIF_ADDR_WR64B_REG => dma_write(device),
-        _ => device::memory::masked_write_32(&mut device.si.regs[reg as usize], value, mask),
+        _ => device::memory::masked_write_32(&mut device.si.regs[reg], value, mask),
     }
 }
 
@@ -102,7 +111,7 @@ fn copy_pif_rdram(device: &mut device::Device) {
         ui::video::check_framebuffers(dram_addr as u32, device::pif::PIF_RAM_SIZE as u32);
         let mut i = 0;
         while i < device::pif::PIF_RAM_SIZE {
-            let data = u32::from_be_bytes(device.pif.ram[i..i + 4].try_into().unwrap());
+            let data = device::memory::read_u32_be_at(&device.pif.ram, i);
             device
                 .rdram
                 .mem
@@ -112,7 +121,7 @@ fn copy_pif_rdram(device: &mut device::Device) {
             i += 4;
         }
     } else {
-        panic!("si dma unknown")
+        eprintln!("SI DMA with unknown direction {:?}", device.si.dma_dir);
     }
 }
 
@@ -122,11 +131,55 @@ pub fn dma_event(device: &mut device::Device) {
     } else if device.si.dma_dir == DmaDir::Read {
         device::si::copy_pif_rdram(device);
     } else {
-        panic!("si dma unknown")
+        eprintln!("SI DMA event with unknown direction {:?}", device.si.dma_dir);
     }
     device.si.dma_dir = DmaDir::None;
     device.si.regs[SI_STATUS_REG] &= !(SI_STATUS_DMA_BUSY | SI_STATUS_IO_BUSY);
     device.si.regs[SI_STATUS_REG] |= SI_STATUS_INTERRUPT;
 
     device::mi::set_rcp_interrupt(device, device::mi::MI_INTR_SI)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn unknown_si_register_read_returns_zero() {
+        let mut device = *crate::device::Device::new(false);
+        let value = super::read_regs(
+            &mut device,
+            0x0480_0100,
+            crate::device::memory::AccessSize::Word,
+        );
+        assert_eq!(value, 0);
+    }
+
+    #[test]
+    fn unknown_si_register_write_is_ignored() {
+        let mut device = *crate::device::Device::new(false);
+        device.si.regs[0] = 0x1234_5678;
+        super::write_regs(&mut device, 0x0480_0100, 0xDEAD_BEEF, 0xFFFF_FFFF);
+        assert_eq!(device.si.regs[0], 0x1234_5678);
+    }
+
+    #[test]
+    fn si_pif_dma_roundtrips_through_rdram() {
+        let mut device = *crate::device::Device::new(false);
+        device.si.regs[super::SI_DRAM_ADDR_REG] = 0x1000;
+        device.rdram.mem[0x1000..0x1004].copy_from_slice(&0xAABB_CCDDu32.to_ne_bytes());
+
+        device.si.dma_dir = super::DmaDir::Write;
+        super::copy_pif_rdram(&mut device);
+        assert_eq!(
+            device::memory::read_u32_be_at(&device.pif.ram, 0),
+            0xAABB_CCDD
+        );
+
+        device.rdram.mem[0x1000..0x1004].fill(0);
+        device.si.dma_dir = super::DmaDir::Read;
+        super::copy_pif_rdram(&mut device);
+        assert_eq!(
+            u32::from_ne_bytes(device.rdram.mem[0x1000..0x1004].try_into().unwrap()),
+            0xAABB_CCDD
+        );
+    }
 }

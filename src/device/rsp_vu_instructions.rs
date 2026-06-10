@@ -936,6 +936,4 @@ pub fn execute_vec(device: &mut device::Device, opcode: u32) {
     device.rsp.cpu.vec_instrs[(opcode & 0x3F) as usize](device, opcode)
 }
 
-pub fn reserved(_device: &mut device::Device, _opcode: u32) {
-    panic!("rsp vu reserved")
-}
+pub fn reserved(_device: &mut device::Device, _opcode: u32) {}

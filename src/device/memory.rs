@@ -60,6 +60,30 @@ pub fn masked_write_64(dst: &mut u64, value: u64, mask: u64) {
     *dst = (*dst & !mask) | (value & mask);
 }
 
+pub fn read_u32_be_at(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_be_bytes(
+        bytes
+            .get(offset..offset + 4)
+            .and_then(|slice| slice.try_into().ok())
+            .unwrap_or([0; 4]),
+    )
+}
+
+pub fn write_u32_be_at(bytes: &mut [u8], offset: usize, value: u32) {
+    if let Some(slot) = bytes.get_mut(offset..offset + 4) {
+        slot.copy_from_slice(&value.to_be_bytes());
+    }
+}
+
+pub fn read_u16_le_at(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_ne_bytes(
+        bytes
+            .get(offset..offset + 2)
+            .and_then(|slice| slice.try_into().ok())
+            .unwrap_or([0; 2]),
+    )
+}
+
 pub fn translate_address(
     device: &mut device::Device,
     mut address: u64,
@@ -178,5 +202,21 @@ pub fn init(device: &mut device::Device) {
             device.memory.memory_map_read[i] = device::cart::sc64::read_regs;
             device.memory.memory_map_write[i] = device::cart::sc64::write_regs;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn read_u32_be_at_returns_zero_for_short_slice() {
+        let bytes = [0x11, 0x22, 0x33];
+        assert_eq!(super::read_u32_be_at(&bytes, 0), 0);
+    }
+
+    #[test]
+    fn write_u32_be_at_ignores_out_of_range_offset() {
+        let mut bytes = [0u8; 2];
+        super::write_u32_be_at(&mut bytes, 0, 0xDEAD_BEEF);
+        assert_eq!(bytes, [0xDE, 0xAD]);
     }
 }

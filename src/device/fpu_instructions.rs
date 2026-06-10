@@ -178,7 +178,7 @@ pub fn cvt_w_s(device: &mut device::Device, opcode: u32) {
         1 => trunc_w_s(device, opcode),
         2 => ceil_w_s(device, opcode),
         3 => floor_w_s(device, opcode),
-        _ => panic!("unknown cvt_w_s"),
+        _ => unreachable!("FCR31 rounding mode is masked to 2 bits"),
     }
 }
 
@@ -188,7 +188,7 @@ pub fn cvt_l_s(device: &mut device::Device, opcode: u32) {
         1 => trunc_l_s(device, opcode),
         2 => ceil_l_s(device, opcode),
         3 => floor_l_s(device, opcode),
-        _ => panic!("unknown cvt_l_s"),
+        _ => unreachable!("FCR31 rounding mode is masked to 2 bits"),
     }
 }
 
@@ -482,7 +482,7 @@ pub fn cvt_w_d(device: &mut device::Device, opcode: u32) {
         1 => trunc_w_d(device, opcode),
         2 => ceil_w_d(device, opcode),
         3 => floor_w_d(device, opcode),
-        _ => panic!("unknown cvt_w_d"),
+        _ => unreachable!("FCR31 rounding mode is masked to 2 bits"),
     }
 }
 
@@ -492,7 +492,7 @@ pub fn cvt_l_d(device: &mut device::Device, opcode: u32) {
         1 => trunc_l_d(device, opcode),
         2 => ceil_l_d(device, opcode),
         3 => floor_l_d(device, opcode),
-        _ => panic!("unknown cvt_l_d"),
+        _ => unreachable!("FCR31 rounding mode is masked to 2 bits"),
     }
 }
 
