@@ -37,6 +37,7 @@ pub mod pi;
 pub mod pif;
 pub mod rdp;
 pub mod rdram;
+pub mod rdram_init;
 pub mod ri;
 pub mod rsp_cpu;
 pub mod rsp_interface;

@@ -763,7 +763,7 @@ pub fn cache(device: &mut device::Device, opcode: u32) {
             }
         }
         _ => {
-            panic!("unknown cache code {:x}", rt(opcode))
+            eprintln!("unknown cache code {:x}", rt(opcode));
         }
     }
 }
