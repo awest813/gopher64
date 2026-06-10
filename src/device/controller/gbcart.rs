@@ -266,7 +266,7 @@ fn write_mbc3(
             cart.rtc_regs[cart.ram_bank as usize - 0x8] = value;
         }
     } else {
-        panic!("Unsupported write address {address:x}");
+        eprintln!("Unsupported MBC3 write address {address:x}");
     }
 }
 
@@ -305,7 +305,10 @@ fn read_mbc3(
             }
         }
     } else {
-        panic!("Unsupported read address {address:x}");
+        eprintln!("Unsupported MBC3 read address {address:x}");
+        for i in 0..size {
+            pif_ram[data + i] = 0xff;
+        }
     }
 }
 
@@ -338,7 +341,7 @@ fn write_mbc5(
         cart.ram[banked_address as usize..banked_address as usize + size]
             .copy_from_slice(&pif_ram[data..data + size]);
     } else {
-        panic!("Unsupported write address {address:x}");
+        eprintln!("Unsupported MBC5 write address {address:x}");
     }
 }
 
@@ -369,7 +372,10 @@ fn read_mbc5(
         pif_ram[data..data + size]
             .copy_from_slice(&cart.ram[banked_address as usize..banked_address as usize + size]);
     } else {
-        panic!("Unsupported read address {address:x}");
+        eprintln!("Unsupported MBC5 read address {address:x}");
+        for i in 0..size {
+            pif_ram[data + i] = 0xff;
+        }
     }
 }
 
