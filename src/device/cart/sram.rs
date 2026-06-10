@@ -48,14 +48,25 @@ pub fn format_flash(device: &mut device::Device) {
     }
 }
 
+fn read_u32_be_at(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_be_bytes(
+        bytes
+            .get(offset..offset + 4)
+            .and_then(|slice| slice.try_into().ok())
+            .unwrap_or([0; 4]),
+    )
+}
+
+fn write_u32_be_at(bytes: &mut [u8], offset: usize, value: u32) {
+    if let Some(slot) = bytes.get_mut(offset..offset + 4) {
+        slot.copy_from_slice(&value.to_be_bytes());
+    }
+}
+
 fn read_mem_sram(device: &mut device::Device, address: u64) -> u32 {
     let masked_address = address as usize & sram_mask(device);
 
-    u32::from_be_bytes(
-        device.ui.storage.saves.sram.data[masked_address..masked_address + 4]
-            .try_into()
-            .unwrap(),
-    )
+    read_u32_be_at(&device.ui.storage.saves.sram.data, masked_address)
 }
 
 fn read_mem_flash(device: &device::Device, address: u64) -> u32 {
@@ -99,14 +110,13 @@ pub fn read_mem(
 fn write_mem_sram(device: &mut device::Device, address: u64, value: u32, mask: u32) {
     let masked_address = address as usize & sram_mask(device);
 
-    let mut data = u32::from_be_bytes(
-        device.ui.storage.saves.sram.data[masked_address..masked_address + 4]
-            .try_into()
-            .unwrap(),
-    );
+    let mut data = read_u32_be_at(&device.ui.storage.saves.sram.data, masked_address);
     device::memory::masked_write_32(&mut data, value, mask);
-    device.ui.storage.saves.sram.data[masked_address..masked_address + 4]
-        .copy_from_slice(&data.to_be_bytes());
+    write_u32_be_at(
+        &mut device.ui.storage.saves.sram.data,
+        masked_address,
+        data,
+    );
 
     ui::storage::schedule_save(device, ui::storage::SaveTypes::Sram);
 }
@@ -416,5 +426,14 @@ mod tests {
         let mut device = flash_device();
         write_mem_flash(&mut device, 0x10000, 0xDEADBEEF, 0xFFFFFFFF);
         assert_eq!(device.cart.flashram.mode, FlashramMode::ReadArray);
+    }
+
+    #[test]
+    fn sram_read_is_bounds_safe() {
+        let mut device = *crate::device::Device::new(false);
+        device.ui.storage.saves.sram.data = vec![0xFF; 0x8000];
+        device.ui.storage.save_type = vec![crate::ui::storage::SaveTypes::Sram];
+        let value = super::read_mem(&mut device, 0x8000, crate::device::memory::AccessSize::Word);
+        assert_eq!(value, 0);
     }
 }

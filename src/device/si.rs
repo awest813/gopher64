@@ -29,13 +29,27 @@ pub struct Si {
     pub dma_dir: DmaDir,
 }
 
+fn read_u32_be_at(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_be_bytes(
+        bytes
+            .get(offset..offset + 4)
+            .and_then(|slice| slice.try_into().ok())
+            .unwrap_or([0; 4]),
+    )
+}
+
 pub fn read_regs(
     device: &mut device::Device,
     address: u64,
     _access_size: device::memory::AccessSize,
 ) -> u32 {
     device::cop0::add_cycles(device, 20);
-    device.si.regs[((address & 0xFFFF) >> 2) as usize]
+    let reg = ((address & 0xFFFF) >> 2) as usize;
+    if reg >= SI_REGS_COUNT {
+        eprintln!("Unknown SI register read {reg} at {address:#x}");
+        return 0;
+    }
+    device.si.regs[reg]
 }
 
 fn randomize_interrupt_time(rng: &mut rand::rngs::Xoshiro256PlusPlus) -> u64 {
@@ -67,15 +81,19 @@ fn dma_write(device: &mut device::Device) {
 }
 
 pub fn write_regs(device: &mut device::Device, address: u64, value: u32, mask: u32) {
-    let reg = (address & 0xFFFF) >> 2;
-    match reg as usize {
+    let reg = ((address & 0xFFFF) >> 2) as usize;
+    if reg >= SI_REGS_COUNT {
+        eprintln!("Unknown SI register write {reg} at {address:#x}");
+        return;
+    }
+    match reg {
         SI_STATUS_REG => {
-            device.si.regs[reg as usize] &= !SI_STATUS_INTERRUPT;
+            device.si.regs[reg] &= !SI_STATUS_INTERRUPT;
             device::mi::clear_rcp_interrupt(device, device::mi::MI_INTR_SI)
         }
         SI_PIF_ADDR_RD64B_REG => dma_read(device),
         SI_PIF_ADDR_WR64B_REG => dma_write(device),
-        _ => device::memory::masked_write_32(&mut device.si.regs[reg as usize], value, mask),
+        _ => device::memory::masked_write_32(&mut device.si.regs[reg], value, mask),
     }
 }
 
@@ -102,7 +120,7 @@ fn copy_pif_rdram(device: &mut device::Device) {
         ui::video::check_framebuffers(dram_addr as u32, device::pif::PIF_RAM_SIZE as u32);
         let mut i = 0;
         while i < device::pif::PIF_RAM_SIZE {
-            let data = u32::from_be_bytes(device.pif.ram[i..i + 4].try_into().unwrap());
+            let data = read_u32_be_at(&device.pif.ram, i);
             device
                 .rdram
                 .mem
@@ -129,4 +147,26 @@ pub fn dma_event(device: &mut device::Device) {
     device.si.regs[SI_STATUS_REG] |= SI_STATUS_INTERRUPT;
 
     device::mi::set_rcp_interrupt(device, device::mi::MI_INTR_SI)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn unknown_si_register_read_returns_zero() {
+        let mut device = *crate::device::Device::new(false);
+        let value = super::read_regs(
+            &mut device,
+            0x0480_0100,
+            crate::device::memory::AccessSize::Word,
+        );
+        assert_eq!(value, 0);
+    }
+
+    #[test]
+    fn unknown_si_register_write_is_ignored() {
+        let mut device = *crate::device::Device::new(false);
+        device.si.regs[0] = 0x1234_5678;
+        super::write_regs(&mut device, 0x0480_0100, 0xDEAD_BEEF, 0xFFFF_FFFF);
+        assert_eq!(device.si.regs[0], 0x1234_5678);
+    }
 }

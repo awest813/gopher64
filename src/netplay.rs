@@ -347,7 +347,13 @@ pub fn init(
         }
     });
     let mut matchbox_socket = MatchboxSocket(socket);
-    let mut reliable_channel = matchbox_socket.0.take_channel(1).unwrap();
+    let mut reliable_channel = match matchbox_socket.0.take_channel(1) {
+        Some(channel) => channel,
+        None => {
+            eprintln!("Netplay reliable channel unavailable");
+            return None;
+        }
+    };
     let now = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(10);
     let mut player_numbers = std::collections::BTreeMap::new();
@@ -372,29 +378,57 @@ pub fn init(
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
-    let mut session_builder = ggrs::SessionBuilder::<GgrsConfig>::new()
+    let mut session_builder = match ggrs::SessionBuilder::<GgrsConfig>::new()
         .with_num_players(number_of_players)
-        .unwrap()
-        .with_input_delay(input_delay)
-        .with_fps(if pal { 50 } else { 60 })
-        .unwrap()
-        .with_desync_detection_mode(ggrs::DesyncDetection::On { interval: 60 });
+    {
+        Ok(builder) => builder,
+        Err(err) => {
+            eprintln!("Failed to configure netplay session: {err}");
+            return None;
+        }
+    };
+    session_builder = session_builder.with_input_delay(input_delay);
+    session_builder = match session_builder.with_fps(if pal { 50 } else { 60 }) {
+        Ok(builder) => builder,
+        Err(err) => {
+            eprintln!("Failed to set netplay FPS: {err}");
+            return None;
+        }
+    };
+    session_builder = session_builder.with_desync_detection_mode(ggrs::DesyncDetection::On {
+        interval: 60,
+    });
 
     let mut peers = vec![];
     for (i, peer) in player_numbers.iter() {
         if let Some(peer) = peer {
-            session_builder = session_builder
-                .add_player(ggrs::PlayerType::Remote(*peer), *i)
-                .unwrap();
+            session_builder = match session_builder.add_player(ggrs::PlayerType::Remote(*peer), *i)
+            {
+                Ok(builder) => builder,
+                Err(err) => {
+                    eprintln!("Failed to add remote netplay player: {err}");
+                    return None;
+                }
+            };
             peers.push(*peer);
         } else {
-            session_builder = session_builder
-                .add_player(ggrs::PlayerType::Local, *i)
-                .unwrap();
+            session_builder = match session_builder.add_player(ggrs::PlayerType::Local, *i) {
+                Ok(builder) => builder,
+                Err(err) => {
+                    eprintln!("Failed to add local netplay player: {err}");
+                    return None;
+                }
+            };
         }
     }
 
-    let mut session = session_builder.start_p2p_session(matchbox_socket).unwrap();
+    let mut session = match session_builder.start_p2p_session(matchbox_socket) {
+        Ok(session) => session,
+        Err(err) => {
+            eprintln!("Failed to start netplay session: {err}");
+            return None;
+        }
+    };
 
     let now = std::time::Instant::now();
     while session.current_state() != ggrs::SessionState::Running {

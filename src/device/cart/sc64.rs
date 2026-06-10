@@ -35,7 +35,9 @@ fn format_sdcard(device: &mut device::Device) {
     if device.ui.storage.saves.sdcard.data.is_empty() {
         device.ui.storage.saves.sdcard.data.resize(SDCARD_SIZE, 0);
         let buf = std::io::Cursor::new(&mut device.ui.storage.saves.sdcard.data);
-        fatfs::format_volume(buf, fatfs::FormatVolumeOptions::new()).unwrap();
+        if let Err(err) = fatfs::format_volume(buf, fatfs::FormatVolumeOptions::new()) {
+            eprintln!("Failed to format SC64 SD card: {err}");
+        }
     }
 }
 
@@ -81,7 +83,11 @@ pub fn write_regs(device: &mut device::Device, address: u64, value: u32, mask: u
         }
         SC64_SCR_REG => {
             if !device.cart.sc64.regs_locked {
-                match char::from_u32(value & mask).unwrap() {
+                let Some(cmd) = char::from_u32(value & mask) else {
+                    eprintln!("Invalid SC64 command value {value:#x} at {address:#x}");
+                    return;
+                };
+                match cmd {
                     'V' => {
                         // get version
                         device.cart.sc64.regs[SC64_DATA0_REG] = (2 << 16) | 20;
@@ -372,43 +378,44 @@ pub fn read_mem(
 ) -> u32 {
     if address & 0x2000 != 0 {
         let masked_address = address as usize & SC64_EEPROM_MASK;
-        u32::from_be_bytes(
-            device.ui.storage.saves.eeprom.data[masked_address..masked_address + 4]
-                .try_into()
-                .unwrap(),
-        )
+        read_u32_be_at(&device.ui.storage.saves.eeprom.data, masked_address)
     } else {
         let masked_address = address as usize & SC64_BUFFER_MASK;
-        u32::from_be_bytes(
-            device.cart.sc64.buffer[masked_address..masked_address + 4]
-                .try_into()
-                .unwrap(),
-        )
+        read_u32_be_at(&device.cart.sc64.buffer, masked_address)
+    }
+}
+
+fn read_u32_be_at(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_be_bytes(
+        bytes
+            .get(offset..offset + 4)
+            .and_then(|slice| slice.try_into().ok())
+            .unwrap_or([0; 4]),
+    )
+}
+
+fn write_u32_be_at(bytes: &mut [u8], offset: usize, value: u32) {
+    if let Some(slot) = bytes.get_mut(offset..offset + 4) {
+        slot.copy_from_slice(&value.to_be_bytes());
     }
 }
 
 pub fn write_mem(device: &mut device::Device, address: u64, value: u32, mask: u32) {
     if address & 0x2000 != 0 {
         let masked_address = address as usize & SC64_EEPROM_MASK;
-        let mut data = u32::from_be_bytes(
-            device.ui.storage.saves.eeprom.data[masked_address..masked_address + 4]
-                .try_into()
-                .unwrap(),
-        );
+        let mut data = read_u32_be_at(&device.ui.storage.saves.eeprom.data, masked_address);
         device::memory::masked_write_32(&mut data, value, mask);
-        device.ui.storage.saves.eeprom.data[masked_address..masked_address + 4]
-            .copy_from_slice(&data.to_be_bytes());
+        write_u32_be_at(
+            &mut device.ui.storage.saves.eeprom.data,
+            masked_address,
+            data,
+        );
         ui::storage::schedule_save(device, ui::storage::SaveTypes::Eeprom4k);
     } else {
         let masked_address = address as usize & SC64_BUFFER_MASK;
-        let mut data = u32::from_be_bytes(
-            device.cart.sc64.buffer[masked_address..masked_address + 4]
-                .try_into()
-                .unwrap(),
-        );
+        let mut data = read_u32_be_at(&device.cart.sc64.buffer, masked_address);
         device::memory::masked_write_32(&mut data, value, mask);
-        device.cart.sc64.buffer[masked_address..masked_address + 4]
-            .copy_from_slice(&data.to_be_bytes());
+        write_u32_be_at(&mut device.cart.sc64.buffer, masked_address, data);
     }
 }
 
