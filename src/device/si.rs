@@ -112,7 +112,7 @@ fn copy_pif_rdram(device: &mut device::Device) {
             i += 4;
         }
     } else {
-        panic!("si dma unknown")
+        eprintln!("SI DMA with unknown direction {:?}", device.si.dma_dir);
     }
 }
 
@@ -122,7 +122,7 @@ pub fn dma_event(device: &mut device::Device) {
     } else if device.si.dma_dir == DmaDir::Read {
         device::si::copy_pif_rdram(device);
     } else {
-        panic!("si dma unknown")
+        eprintln!("SI DMA event with unknown direction {:?}", device.si.dma_dir);
     }
     device.si.dma_dir = DmaDir::None;
     device.si.regs[SI_STATUS_REG] &= !(SI_STATUS_DMA_BUSY | SI_STATUS_IO_BUSY);
