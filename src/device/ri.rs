@@ -26,12 +26,12 @@ pub fn read_regs(
     match reg as usize {
         RI_SELECT_REG => {
             if !device.ri.ram_init {
-                device::cop0::add_cycles(device, device.cpu.clock_rate / 2); // hack, simulate RDRAM initialization
+                device::cop0::add_cycles(device, device.cpu.clock_rate / 2);
                 device.ri.ram_init = true;
             }
-            0x14 // hack, skip RDRAM initialization
+            device.ri.regs[RI_SELECT_REG]
         }
-        RI_REFRESH_REG => 0x00063634, // hack, skip RDRAM initialization
+        RI_REFRESH_REG => device.ri.regs[RI_REFRESH_REG],
         _ => device.ri.regs[reg as usize],
     }
 }
