@@ -7,7 +7,8 @@ below apply to the listed components.
 
 RDRAM register initialization in `src/device/rdram_init.rs` is adapted from
 [rasky/small64](https://github.com/rasky/small64), specifically the compact
-RDRAM init sequence in `stage0.S` and related register helpers.
+RDRAM init sequence in `stage0.S` (`rdram_init` / `rdram_init_values`) and
+register helpers in `minidragon.h`.
 
 Copyright (c) 2025 Giovanni Bajo
 

@@ -1,11 +1,11 @@
 // RDRAM register initialization adapted from rasky/small64 (MIT License).
+// Source: minidragon.h and stage0.S (rdram_init / rdram_init_values).
 // Copyright (c) 2025 Giovanni Bajo. See THIRD_PARTY_NOTICES.md.
 
 use crate::device;
 
 const RI_CONFIG_AUTO_CALIBRATION: u32 = 0x40;
 const RI_SELECT_RX_TX: u32 = 0x14;
-const RI_MODE_RESET: u32 = 0;
 const RI_MODE_STANDARD: u32 = 0x8 | 0x4 | 0x2;
 const RI_REFRESH_AUTO: u32 = 1 << 17;
 const RI_REFRESH_OPTIMIZE: u32 = 1 << 18;
@@ -21,8 +21,8 @@ const RDRAM_REG_MODE_AS: u32 = 1 << 26;
 const INITID: u32 = 0x1F;
 const DEFAULT_CURRENT_CALIBRATION: u32 = 0x18;
 
-const MI_SET_INIT: u32 = 1 << 8;
-const MI_INIT_LENGTH_16: u32 = 15;
+/// RDRAM size markers written by IPL3 for libdragon and other homebrew boot code.
+const MEMORY_SIZE_MARKER_OFFSETS: [usize; 2] = [0x318, 0x3f0];
 
 fn bit(x: u32, n: u32) -> u32 {
     (x >> n) & 1
@@ -50,7 +50,12 @@ fn rdram_reg_mode_cc(cc: u32) -> u32 {
         | (bit(cc, 5) << 23)
 }
 
-fn rdram_reg_delay_make(ack_win_delay: u32, read_delay: u32, ack_delay: u32, write_delay: u32) -> u32 {
+fn rdram_reg_delay_make(
+    ack_win_delay: u32,
+    read_delay: u32,
+    ack_delay: u32,
+    write_delay: u32,
+) -> u32 {
     (((ack_win_delay & 7) << 3) << 24)
         | (((read_delay & 7) << 3) << 16)
         | (((ack_delay & 3) << 3) << 8)
@@ -89,11 +94,7 @@ fn rdram_mode_value(current_calibration: u32) -> u32 {
 }
 
 fn num_rdram_banks(rdram_size: u32) -> u32 {
-    if rdram_size >= 0x800000 {
-        4
-    } else {
-        2
-    }
+    if rdram_size >= 0x800000 { 4 } else { 2 }
 }
 
 fn apply_broadcast_rdram_regs(device: &mut device::Device, mode: u32) {
@@ -110,7 +111,19 @@ fn apply_broadcast_rdram_regs(device: &mut device::Device, mode: u32) {
     }
 }
 
+fn write_memory_size_markers(mem: &mut [u8], size: u32) {
+    let bytes = size.to_ne_bytes();
+    for offset in MEMORY_SIZE_MARKER_OFFSETS {
+        if let Some(slot) = mem.get_mut(offset..offset + 4) {
+            slot.copy_from_slice(&bytes);
+        }
+    }
+}
+
 /// Initialize RI/RDRAM registers using the compact sequence from small64.
+///
+/// This mirrors the post-calibration register state that real boot code leaves
+/// behind, allowing the emulated CPU to skip hardware RDRAM training.
 pub fn init_registers(device: &mut device::Device) {
     let num_banks = num_rdram_banks(device.rdram.size);
     let mode = rdram_mode_value(DEFAULT_CURRENT_CALIBRATION);
@@ -130,37 +143,20 @@ pub fn init_registers(device: &mut device::Device) {
     };
     for &chip_id in chip_ids {
         let chip_index = (chip_id / 2) as usize;
-        if chip_index < device.rdram.regs.len() {
-            device.rdram.regs[chip_index][RDRAM_REG_DEVICE_ID] =
-                rdram_reg_device_id_make(chip_id);
-        }
+        device.rdram.regs[chip_index][RDRAM_REG_DEVICE_ID] = rdram_reg_device_id_make(chip_id);
     }
 
-    device.mi.regs[device::mi::MI_INIT_MODE_REG] =
-        device::mi::MI_INIT_MODE | MI_SET_INIT | MI_INIT_LENGTH_16;
-
-    // IPL3 stores the detected memory size at these locations for libdragon/homebrew.
-    device
-        .rdram
-        .mem
-        .get_mut(0x318..0x318 + 4)
-        .unwrap_or(&mut [0; 4])
-        .copy_from_slice(&device.rdram.size.to_ne_bytes());
-    device
-        .rdram
-        .mem
-        .get_mut(0x3f0..0x3f0 + 4)
-        .unwrap_or(&mut [0; 4])
-        .copy_from_slice(&device.rdram.size.to_ne_bytes());
+    write_memory_size_markers(&mut device.rdram.mem, device.rdram.size);
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         DEFAULT_CURRENT_CALIBRATION, INITID, rdram_mode_value, rdram_reg_delay_make,
-        rdram_reg_device_id_make, rdram_reg_mode_cc, rdram_reg_rasinterval_make, ri_refresh_value,
-        rot16,
+        rdram_reg_device_id_make, rdram_reg_mode_cc, rdram_reg_rasinterval_make,
+        ri_refresh_value, rot16, write_memory_size_markers, MEMORY_SIZE_MARKER_OFFSETS,
     };
+    use crate::device;
 
     #[test]
     fn rdram_reg_mode_cc_scrambles_calibration_nibble() {
@@ -175,7 +171,9 @@ mod tests {
 
     #[test]
     fn rdram_reg_device_id_make_initid() {
-        assert_eq!(rdram_reg_device_id_make(INITID), rdram_reg_device_id_make(0x1F));
+        assert_eq!(rdram_reg_device_id_make(INITID), 0x7C00_0000);
+        assert_eq!(rdram_reg_device_id_make(0), 0);
+        assert_eq!(rdram_reg_device_id_make(2), 0x0800_0000);
     }
 
     #[test]
@@ -185,16 +183,55 @@ mod tests {
     }
 
     #[test]
-    fn ri_refresh_value_for_two_banks() {
-        let refresh = ri_refresh_value(2);
-        assert_eq!(refresh & 0xFF, 52);
-        assert_eq!((refresh >> 8) & 0xFF, 54);
-        assert_eq!((refresh >> 19) & 0xF, 3);
+    fn ri_refresh_value_for_two_and_four_banks() {
+        let two_banks = ri_refresh_value(2);
+        assert_eq!(two_banks & 0xFF, 52);
+        assert_eq!((two_banks >> 8) & 0xFF, 54);
+        assert_eq!((two_banks >> 19) & 0xF, 3);
+
+        let four_banks = ri_refresh_value(4);
+        assert_eq!((four_banks >> 19) & 0xF, 15);
     }
 
     #[test]
     fn rdram_reg_rasinterval_make_encodes_rows() {
         let value = rdram_reg_rasinterval_make(1, 7, 10, 4);
         assert_eq!(value, 0x101C_0A04);
+    }
+
+    #[test]
+    fn write_memory_size_markers_stores_size_at_ipl3_offsets() {
+        let mut mem = vec![0u8; 0x400];
+        write_memory_size_markers(&mut mem, 0x800000);
+        for offset in MEMORY_SIZE_MARKER_OFFSETS {
+            assert_eq!(
+                u32::from_ne_bytes(mem[offset..offset + 4].try_into().unwrap()),
+                0x800000
+            );
+        }
+    }
+
+    #[test]
+    fn init_registers_configures_8mb_expansion_pak() {
+        let mut device = *device::Device::new(false);
+        device::rdram::init(&mut device);
+
+        assert_eq!(device.ri.regs[device::ri::RI_CONFIG_REG], 0x40);
+        assert_eq!(device.ri.regs[device::ri::RI_SELECT_REG], 0x14);
+        assert_eq!(device.ri.regs[device::ri::RI_MODE_REG], 0x0E);
+        assert!(device.ri.ram_init);
+        assert_eq!(device.rdram.regs[0][1], rdram_reg_device_id_make(0));
+        assert_eq!(device.rdram.regs[3][1], rdram_reg_device_id_make(6));
+
+        for offset in MEMORY_SIZE_MARKER_OFFSETS {
+            assert_eq!(
+                u32::from_ne_bytes(
+                    device.rdram.mem[offset..offset + 4]
+                        .try_into()
+                        .unwrap()
+                ),
+                device.rdram.size
+            );
+        }
     }
 }

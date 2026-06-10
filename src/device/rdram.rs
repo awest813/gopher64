@@ -103,6 +103,14 @@ pub fn write_mem_repeat(device: &mut device::Device, address: u64, value: u32, m
         return;
     }
 
+    let end = address as usize + repeat_length as usize;
+    if end > device.rdram.mem.len() {
+        eprintln!(
+            "RDRAM write_mem_repeat out of bounds at {address:#x} length {repeat_length}; ignoring"
+        );
+        return;
+    }
+
     ui::video::check_framebuffers(address as u32, repeat_length);
 
     for i in (0..repeat_length as u64).step_by(4) {
@@ -156,7 +164,6 @@ pub fn init(device: &mut device::Device) {
     retroachievements::set_rdram(device.rdram.mem.as_ptr(), device.rdram.size as usize);
 
     rdram_init::init_registers(device);
-    device.ri.regs[device::ri::RI_MODE_REG] = 0x0e;
 }
 
 pub fn rdram_calculate_cycles(length: u64) -> u64 {
