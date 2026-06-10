@@ -62,8 +62,20 @@ struct NetplayMessage {
     data: Vec<u8>,
 }
 
+fn serialize_netplay_message(message: &NetplayMessage) -> Option<Vec<u8>> {
+    match postcard::to_stdvec(message) {
+        Ok(data) => Some(data),
+        Err(err) => {
+            eprintln!("Failed to serialize netplay message: {err}");
+            None
+        }
+    }
+}
+
 fn send_message(netplay: &mut Netplay, message: NetplayMessage) {
-    let data = postcard::to_stdvec(&message).unwrap();
+    let Some(data) = serialize_netplay_message(&message) else {
+        return;
+    };
     let chunks = data.chunks(16384).collect::<Vec<&[u8]>>();
     for peer in netplay.peers.iter() {
         for chunk in chunks.iter() {
@@ -118,7 +130,9 @@ fn send_player_number(
         name: "player_number".to_string(),
         data: player_number.to_be_bytes().to_vec(),
     };
-    let data = postcard::to_stdvec(&message).unwrap();
+    let Some(data) = serialize_netplay_message(&message) else {
+        return;
+    };
     for peer in peers {
         channel.send(data.clone().into(), peer);
     }
@@ -225,7 +239,11 @@ pub fn process_requests(
                     for reg in device.cpu.cop0.regs.as_ref() {
                         hasher.update(reg.to_be_bytes());
                     }
-                    let hash = u128::from_be_bytes(hasher.finalize()[..16].try_into().unwrap());
+                    let hash = u128::from_be_bytes(
+                        hasher.finalize()[..16]
+                            .try_into()
+                            .unwrap_or([0; 16]),
+                    );
                     cell.save(frame, Some(frame), Some(hash));
                 }
                 ggrs::GgrsRequest::LoadGameState { cell, frame: _ } => {

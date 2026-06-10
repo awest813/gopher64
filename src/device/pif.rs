@@ -30,6 +30,19 @@ impl PifChannel {
     pub(crate) fn buffers(&self) -> Option<(usize, usize)> {
         Some((self.tx_buf?, self.rx_buf?))
     }
+
+    pub(crate) fn endpoints(&self) -> Option<(usize, usize, usize, usize)> {
+        Some((self.tx?, self.rx?, self.tx_buf?, self.rx_buf?))
+    }
+}
+
+fn read_u32_be_at(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_be_bytes(
+        bytes
+            .get(offset..offset + 4)
+            .and_then(|slice| slice.try_into().ok())
+            .unwrap_or([0; 4]),
+    )
 }
 
 pub const PIF_RAM_SIZE: usize = 64;
@@ -47,18 +60,10 @@ pub fn read_mem(
 
     let mut masked_address = address as usize & PIF_MASK;
     if masked_address < PIF_RAM_OFFSET {
-        u32::from_be_bytes(
-            device.pif.rom[masked_address..masked_address + 4]
-                .try_into()
-                .unwrap(),
-        )
+        read_u32_be_at(&device.pif.rom, masked_address)
     } else {
         masked_address -= PIF_RAM_OFFSET;
-        u32::from_be_bytes(
-            device.pif.ram[masked_address..masked_address + 4]
-                .try_into()
-                .unwrap(),
-        )
+        read_u32_be_at(&device.pif.ram, masked_address)
     }
 }
 
@@ -69,11 +74,7 @@ pub fn write_mem(device: &mut device::Device, address: u64, value: u32, mask: u3
         return;
     }
     masked_address -= PIF_RAM_OFFSET;
-    let mut data = u32::from_be_bytes(
-        device.pif.ram[masked_address..masked_address + 4]
-            .try_into()
-            .unwrap(),
-    );
+    let mut data = read_u32_be_at(&device.pif.ram, masked_address);
     device::memory::masked_write_32(&mut data, value, mask);
     device.pif.ram[masked_address..masked_address + 4].copy_from_slice(&data.to_be_bytes());
 
@@ -99,13 +100,11 @@ fn process_channel(device: &mut device::Device, channel: usize) -> usize {
     device.pif.ram[rx] &= 0x3f;
 
     /* set NoResponse if no device is connected */
-    if device.pif.channels[channel].process.is_none() {
+    let Some(process_handler) = device.pif.channels[channel].process else {
         device.pif.ram[rx] |= 0x80;
         return 0;
-    }
+    };
 
-    /* do device processing */
-    let process_handler = device.pif.channels[channel].process.unwrap();
     process_handler(device, channel);
     1
 }
@@ -401,5 +400,16 @@ mod tests {
         let active = super::update_pif_ram(&mut device);
 
         assert_eq!(active, 0);
+    }
+
+    #[test]
+    fn pif_ram_read_uses_zero_fill_for_short_slice() {
+        let mut device = *crate::device::Device::new(false);
+        let value = super::read_mem(
+            &mut device,
+            (super::PIF_RAM_OFFSET + super::PIF_RAM_SIZE - 2) as u64,
+            crate::device::memory::AccessSize::Word,
+        );
+        assert_eq!(value, 0);
     }
 }
