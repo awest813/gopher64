@@ -94,7 +94,8 @@ fn receive_message(netplay: &mut Netplay, name: &str) -> Vec<u8> {
         }
 
         if now.elapsed() > timeout {
-            panic!("Could not receive message for {name}");
+            eprintln!("Timed out waiting for netplay message: {name}");
+            return Vec::new();
         }
         std::thread::sleep(std::time::Duration::from_millis(1));
     }

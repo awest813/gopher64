@@ -68,8 +68,11 @@ fn read_mem_flash(device: &device::Device, address: u64) -> u32 {
          * returns a "dummy" value. */
         0
     } else {
-        /* other accesses are not implemented */
-        panic!("unknown flashram read")
+        eprintln!(
+            "unknown flashram read at {address:#x} in mode {:?}",
+            device.cart.flashram.mode
+        );
+        0
     }
 }
 
@@ -116,8 +119,10 @@ fn write_mem_flash(device: &mut device::Device, address: u64, value: u32, mask: 
         /* set command */
         flashram_command(device, value & mask);
     } else {
-        /* other accesses are not implemented */
-        panic!("unknown flashram write")
+        eprintln!(
+            "unknown flashram write at {address:#x} in mode {:?}",
+            device.cart.flashram.mode
+        );
     }
 }
 
@@ -179,8 +184,10 @@ fn dma_read_flash(device: &mut device::Device, cart_addr: u32, dram_addr: u32, l
                 .unwrap_or(&0);
         }
     } else {
-        /* other accesses are not implemented */
-        panic!("unknown flash dma read")
+        eprintln!(
+            "unknown flash dma read at cart {cart_addr:#x}, dram {dram_addr:#x}, len {length} in mode {:?}",
+            device.cart.flashram.mode
+        );
     }
 }
 
@@ -278,8 +285,10 @@ fn dma_write_flash(
                 .unwrap_or(&mut 0) = device.ui.storage.saves.flash.data[(cart_addr + i) as usize];
         }
     } else {
-        /* other accesses are not implemented */
-        panic!("unknown flash dma write")
+        eprintln!(
+            "unknown flash dma write at cart {cart_addr:#x}, dram {dram_addr:#x}, len {length} in mode {:?}",
+            device.cart.flashram.mode
+        );
     }
 }
 
@@ -328,7 +337,10 @@ fn flashram_command(device: &mut device::Device, command: u32) {
                 }
                 ui::storage::schedule_save(device, ui::storage::SaveTypes::Flash);
             } else {
-                panic!("Unexpected flash erase command")
+                eprintln!(
+                    "unexpected flash erase in mode {:?}",
+                    device.cart.flashram.mode
+                );
             }
 
             /* clear erase busy flag, set erase success flag, transition to status mode */
@@ -376,7 +388,33 @@ fn flashram_command(device: &mut device::Device, command: u32) {
         }
 
         _ => {
-            panic!("unknown flash command")
+            eprintln!("unknown flash command: {command:#x}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FlashramMode, write_mem_flash};
+
+    fn flash_device() -> crate::device::Device {
+        let mut device = *crate::device::Device::new(false);
+        device.ui.storage.saves.flash.data = vec![0xFF; super::FLASHRAM_SIZE];
+        device
+    }
+
+    #[test]
+    fn unknown_flashram_read_returns_zero() {
+        let mut device = flash_device();
+        device.cart.flashram.mode = FlashramMode::ReadArray;
+        let value = super::read_mem(&mut device, 0x1234, crate::device::memory::AccessSize::Word);
+        assert_eq!(value, 0);
+    }
+
+    #[test]
+    fn unknown_flash_command_is_ignored() {
+        let mut device = flash_device();
+        write_mem_flash(&mut device, 0x10000, 0xDEADBEEF, 0xFFFFFFFF);
+        assert_eq!(device.cart.flashram.mode, FlashramMode::ReadArray);
     }
 }

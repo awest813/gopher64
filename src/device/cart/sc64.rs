@@ -52,7 +52,10 @@ pub fn read_regs(
     match reg as usize {
         SC64_SCR_REG | SC64_DATA0_REG | SC64_DATA1_REG => device.cart.sc64.regs[reg as usize],
         SC64_IDENTIFIER_REG => 0x53437632,
-        _ => panic!("unknown read reg {reg} address {address:#x}"),
+        _ => {
+            eprintln!("unknown SC64 read reg {reg} at {address:#x}");
+            0
+        }
     }
 }
 
@@ -113,10 +116,11 @@ pub fn write_regs(device: &mut device::Device, address: u64, value: u32, mask: u
                                         vec![ui::storage::SaveTypes::Flash]
                                     }
                                     _ => {
-                                        panic!(
-                                            "unknown sc64 save type: {}",
+                                        eprintln!(
+                                            "unknown SC64 save type: {}",
                                             device.cart.sc64.regs[SC64_DATA1_REG]
-                                        )
+                                        );
+                                        vec![]
                                     }
                                 }
                         }
@@ -134,10 +138,10 @@ pub fn write_regs(device: &mut device::Device, address: u64, value: u32, mask: u
                             1 => { //Deinit SD card
                             }
                             _ => {
-                                panic!(
-                                    "unknown sc64 sd card operation: {}",
+                                eprintln!(
+                                    "unknown SC64 SD card operation: {}",
                                     device.cart.sc64.regs[SC64_DATA1_REG]
-                                )
+                                );
                             }
                         }
                     }
@@ -222,7 +226,7 @@ pub fn write_regs(device: &mut device::Device, address: u64, value: u32, mask: u
                                 Err(err) => {
                                     match err {
                                         tokio::sync::broadcast::error::TryRecvError::Lagged(_) => {
-                                            panic!("cart_rx lagged: {err}");
+                                            eprintln!("SC64 cart_rx lagged: {err}");
                                         }
                                         _ => {
                                             device.cart.sc64.regs[SC64_DATA0_REG] = 0; // read_status/type
@@ -283,7 +287,7 @@ pub fn write_regs(device: &mut device::Device, address: u64, value: u32, mask: u
                                     i += 1;
                                 }
                             } else {
-                                panic!("Unknown address {address:#x} for SC64 M command");
+                                eprintln!("Unknown address {address:#x} for SC64 M command");
                             }
 
                             ui::usb::send_to_usb(
@@ -324,7 +328,7 @@ pub fn write_regs(device: &mut device::Device, address: u64, value: u32, mask: u
                                 i += 1;
                             }
                         } else {
-                            panic!("Unknown address {address:#x} for SC64 m command");
+                            eprintln!("Unknown address {address:#x} for SC64 m command");
                         }
                     }
                     'w' => {
@@ -344,20 +348,20 @@ pub fn write_regs(device: &mut device::Device, address: u64, value: u32, mask: u
                         }
                     }
                     _ => {
-                        panic!(
-                            "unknown sc64 command: {}",
-                            char::from_u32(value & mask).unwrap()
-                        )
+                        eprintln!(
+                            "unknown SC64 command: {}",
+                            char::from_u32(value & mask).unwrap_or('?')
+                        );
                     }
                 }
             }
         }
-        _ => panic!(
-            "unknown write reg {} address {:#x} value {}",
-            reg,
-            address,
-            char::from_u32(value & mask).unwrap()
-        ),
+        _ => {
+            eprintln!(
+                "unknown SC64 write reg {reg} at {address:#x} value {}",
+                char::from_u32(value & mask).unwrap_or('?')
+            );
+        }
     }
 }
 
