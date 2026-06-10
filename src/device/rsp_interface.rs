@@ -61,20 +61,6 @@ const SP_SET_SIG7: u32 = 1 << 24;
 
 const RSP_MEM_MASK: usize = 0x1FFF;
 
-fn read_u32_be_at(mem: &[u8], offset: usize) -> u32 {
-    u32::from_be_bytes(
-        mem.get(offset..offset + 4)
-            .and_then(|slice| slice.try_into().ok())
-            .unwrap_or([0; 4]),
-    )
-}
-
-fn write_u32_be_at(mem: &mut [u8], offset: usize, value: u32) {
-    if let Some(slot) = mem.get_mut(offset..offset + 4) {
-        slot.copy_from_slice(&value.to_be_bytes());
-    }
-}
-
 #[derive(PartialEq, Copy, Clone, serde::Serialize, serde::Deserialize)]
 pub enum DmaDir {
     None,
@@ -108,7 +94,7 @@ pub fn read_mem_fast(
     _access_size: device::memory::AccessSize,
 ) -> u32 {
     let masked_address = address as usize & RSP_MEM_MASK;
-    read_u32_be_at(&device.rsp.mem, masked_address)
+    device::memory::read_u32_be_at(&device.rsp.mem, masked_address)
 }
 
 pub fn read_mem(
@@ -119,14 +105,14 @@ pub fn read_mem(
     device::cop0::add_cycles(device, access_size as u64 / 4);
 
     let masked_address = address as usize & RSP_MEM_MASK;
-    read_u32_be_at(&device.rsp.mem, masked_address)
+    device::memory::read_u32_be_at(&device.rsp.mem, masked_address)
 }
 
 pub fn write_mem(device: &mut device::Device, address: u64, value: u32, _mask: u32) {
     let masked_address = address as usize & RSP_MEM_MASK;
-    let mut data = read_u32_be_at(&device.rsp.mem, masked_address);
+    let mut data = device::memory::read_u32_be_at(&device.rsp.mem, masked_address);
     device::memory::masked_write_32(&mut data, value, 0xFFFFFFFF);
-    write_u32_be_at(&mut device.rsp.mem, masked_address, data);
+    device::memory::write_u32_be_at(&mut device.rsp.mem, masked_address, data);
 
     if masked_address & 0x1000 != 0 {
         // imem being updated
@@ -155,7 +141,7 @@ fn do_dma(device: &mut device::Device, dma: RspDma) {
         while j < count {
             let mut i = 0;
             while i < length {
-                let data = read_u32_be_at(
+                let data = device::memory::read_u32_be_at(
                     &device.rsp.mem,
                     (offset + (mem_addr & 0xFFF)) as usize,
                 );
@@ -193,9 +179,11 @@ fn do_dma(device: &mut device::Device, dma: RspDma) {
                         device::rsp_cpu::decode_opcode(device, data);
                     device.rsp.cpu.instructions[((mem_addr & 0xFFF) / 4) as usize].opcode = data;
                 }
-                device.rsp.mem[(offset + (mem_addr & 0xFFF)) as usize
-                    ..(offset + (mem_addr & 0xFFF)) as usize + 4]
-                    .copy_from_slice(&data.to_be_bytes());
+                device::memory::write_u32_be_at(
+                    &mut device.rsp.mem,
+                    (offset + (mem_addr & 0xFFF)) as usize,
+                    data,
+                );
                 mem_addr += 4;
                 dram_addr += 4;
                 i += 4;
@@ -532,6 +520,14 @@ mod tests {
     #[test]
     fn rsp_mem_read_is_bounds_safe() {
         let device = *crate::device::Device::new(false);
-        assert_eq!(super::read_u32_be_at(&device.rsp.mem, device.rsp.mem.len()), 0);
+        assert_eq!(device::memory::read_u32_be_at(&device.rsp.mem, device.rsp.mem.len()), 0);
+    }
+
+    #[test]
+    fn unknown_sp_register_write_is_ignored() {
+        let mut device = *crate::device::Device::new(false);
+        device.rsp.regs[0] = 0x1234_5678;
+        super::write_regs(&mut device, 0x0404_0100, 0xDEAD_BEEF, 0xFFFF_FFFF);
+        assert_eq!(device.rsp.regs[0], 0x1234_5678);
     }
 }

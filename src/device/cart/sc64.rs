@@ -50,9 +50,13 @@ pub fn read_regs(
     if device.cart.sc64.regs_locked {
         return 0;
     }
-    let reg = (address & 0xFFFF) >> 2;
-    match reg as usize {
-        SC64_SCR_REG | SC64_DATA0_REG | SC64_DATA1_REG => device.cart.sc64.regs[reg as usize],
+    let reg = ((address & 0xFFFF) >> 2) as usize;
+    if reg >= SC64_REGS_COUNT {
+        eprintln!("unknown SC64 read reg {reg} at {address:#x}");
+        return 0;
+    }
+    match reg {
+        SC64_SCR_REG | SC64_DATA0_REG | SC64_DATA1_REG => device.cart.sc64.regs[reg],
         SC64_IDENTIFIER_REG => 0x53437632,
         _ => {
             eprintln!("unknown SC64 read reg {reg} at {address:#x}");
@@ -62,10 +66,14 @@ pub fn read_regs(
 }
 
 pub fn write_regs(device: &mut device::Device, address: u64, value: u32, mask: u32) {
-    let reg = (address & 0xFFFF) >> 2;
-    match reg as usize {
+    let reg = ((address & 0xFFFF) >> 2) as usize;
+    if reg >= SC64_REGS_COUNT {
+        eprintln!("unknown SC64 write reg {reg} at {address:#x}");
+        return;
+    }
+    match reg {
         SC64_KEY_REG => {
-            device::memory::masked_write_32(&mut device.cart.sc64.regs[reg as usize], value, mask);
+            device::memory::masked_write_32(&mut device.cart.sc64.regs[reg], value, mask);
             if device.cart.sc64.regs[SC64_KEY_REG] == 0x4F434B5F {
                 device.cart.sc64.regs_locked = false;
             } else if device.cart.sc64.regs[SC64_KEY_REG] == 0xFFFFFFFF {
@@ -74,11 +82,7 @@ pub fn write_regs(device: &mut device::Device, address: u64, value: u32, mask: u
         }
         SC64_DATA0_REG | SC64_DATA1_REG => {
             if !device.cart.sc64.regs_locked {
-                device::memory::masked_write_32(
-                    &mut device.cart.sc64.regs[reg as usize],
-                    value,
-                    mask,
-                );
+                device::memory::masked_write_32(&mut device.cart.sc64.regs[reg], value, mask);
             }
         }
         SC64_SCR_REG => {
@@ -95,8 +99,14 @@ pub fn write_regs(device: &mut device::Device, address: u64, value: u32, mask: u
                     }
                     'c' => {
                         // get config
-                        device.cart.sc64.regs[SC64_DATA1_REG] =
-                            device.cart.sc64.cfg[device.cart.sc64.regs[SC64_DATA0_REG] as usize]
+                        let cfg_index = device.cart.sc64.regs[SC64_DATA0_REG] as usize;
+                        device.cart.sc64.regs[SC64_DATA1_REG] = device
+                            .cart
+                            .sc64
+                            .cfg
+                            .get(cfg_index)
+                            .copied()
+                            .unwrap_or(0);
                     }
                     'C' => {
                         // set config
@@ -378,34 +388,20 @@ pub fn read_mem(
 ) -> u32 {
     if address & 0x2000 != 0 {
         let masked_address = address as usize & SC64_EEPROM_MASK;
-        read_u32_be_at(&device.ui.storage.saves.eeprom.data, masked_address)
+        device::memory::read_u32_be_at(&device.ui.storage.saves.eeprom.data, masked_address)
     } else {
         let masked_address = address as usize & SC64_BUFFER_MASK;
-        read_u32_be_at(&device.cart.sc64.buffer, masked_address)
-    }
-}
-
-fn read_u32_be_at(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_be_bytes(
-        bytes
-            .get(offset..offset + 4)
-            .and_then(|slice| slice.try_into().ok())
-            .unwrap_or([0; 4]),
-    )
-}
-
-fn write_u32_be_at(bytes: &mut [u8], offset: usize, value: u32) {
-    if let Some(slot) = bytes.get_mut(offset..offset + 4) {
-        slot.copy_from_slice(&value.to_be_bytes());
+        device::memory::read_u32_be_at(&device.cart.sc64.buffer, masked_address)
     }
 }
 
 pub fn write_mem(device: &mut device::Device, address: u64, value: u32, mask: u32) {
     if address & 0x2000 != 0 {
         let masked_address = address as usize & SC64_EEPROM_MASK;
-        let mut data = read_u32_be_at(&device.ui.storage.saves.eeprom.data, masked_address);
+        let mut data =
+            device::memory::read_u32_be_at(&device.ui.storage.saves.eeprom.data, masked_address);
         device::memory::masked_write_32(&mut data, value, mask);
-        write_u32_be_at(
+        device::memory::write_u32_be_at(
             &mut device.ui.storage.saves.eeprom.data,
             masked_address,
             data,
@@ -413,9 +409,9 @@ pub fn write_mem(device: &mut device::Device, address: u64, value: u32, mask: u3
         ui::storage::schedule_save(device, ui::storage::SaveTypes::Eeprom4k);
     } else {
         let masked_address = address as usize & SC64_BUFFER_MASK;
-        let mut data = read_u32_be_at(&device.cart.sc64.buffer, masked_address);
+        let mut data = device::memory::read_u32_be_at(&device.cart.sc64.buffer, masked_address);
         device::memory::masked_write_32(&mut data, value, mask);
-        write_u32_be_at(&mut device.cart.sc64.buffer, masked_address, data);
+        device::memory::write_u32_be_at(&mut device.cart.sc64.buffer, masked_address, data);
     }
 }
 
@@ -477,4 +473,44 @@ pub fn dma_write(
         j += 1;
     }
     device::pi::calculate_cycles(device, 1, length)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn unknown_sc64_register_read_returns_zero() {
+        let mut device = *crate::device::Device::new(false);
+        let value = super::read_regs(
+            &mut device,
+            0x1FFF_0100,
+            crate::device::memory::AccessSize::Word,
+        );
+        assert_eq!(value, 0);
+    }
+
+    #[test]
+    fn sc64_get_config_clamps_out_of_range_index() {
+        let mut device = *crate::device::Device::new(false);
+        device.cart.sc64.regs_locked = false;
+        device.cart.sc64.regs[super::SC64_DATA0_REG] = super::SC64_CFG_COUNT as u32 + 4;
+        super::write_regs(
+            &mut device,
+            0x1FFF_0000,
+            u32::from('c'),
+            0xFF,
+        );
+        assert_eq!(device.cart.sc64.regs[super::SC64_DATA1_REG], 0);
+    }
+
+    #[test]
+    fn sc64_buffer_read_is_bounds_safe() {
+        let mut device = *crate::device::Device::new(false);
+        device.cart.sc64.buffer = vec![0; 0x2000];
+        let value = super::read_mem(
+            &mut device,
+            0x1FFE_3000,
+            crate::device::memory::AccessSize::Word,
+        );
+        assert_eq!(value, 0);
+    }
 }

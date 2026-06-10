@@ -29,15 +29,6 @@ pub struct Si {
     pub dma_dir: DmaDir,
 }
 
-fn read_u32_be_at(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_be_bytes(
-        bytes
-            .get(offset..offset + 4)
-            .and_then(|slice| slice.try_into().ok())
-            .unwrap_or([0; 4]),
-    )
-}
-
 pub fn read_regs(
     device: &mut device::Device,
     address: u64,
@@ -120,7 +111,7 @@ fn copy_pif_rdram(device: &mut device::Device) {
         ui::video::check_framebuffers(dram_addr as u32, device::pif::PIF_RAM_SIZE as u32);
         let mut i = 0;
         while i < device::pif::PIF_RAM_SIZE {
-            let data = read_u32_be_at(&device.pif.ram, i);
+            let data = device::memory::read_u32_be_at(&device.pif.ram, i);
             device
                 .rdram
                 .mem
@@ -168,5 +159,27 @@ mod tests {
         device.si.regs[0] = 0x1234_5678;
         super::write_regs(&mut device, 0x0480_0100, 0xDEAD_BEEF, 0xFFFF_FFFF);
         assert_eq!(device.si.regs[0], 0x1234_5678);
+    }
+
+    #[test]
+    fn si_pif_dma_roundtrips_through_rdram() {
+        let mut device = *crate::device::Device::new(false);
+        device.si.regs[super::SI_DRAM_ADDR_REG] = 0x1000;
+        device.rdram.mem[0x1000..0x1004].copy_from_slice(&0xAABB_CCDDu32.to_ne_bytes());
+
+        device.si.dma_dir = super::DmaDir::Write;
+        super::copy_pif_rdram(&mut device);
+        assert_eq!(
+            device::memory::read_u32_be_at(&device.pif.ram, 0),
+            0xAABB_CCDD
+        );
+
+        device.rdram.mem[0x1000..0x1004].fill(0);
+        device.si.dma_dir = super::DmaDir::Read;
+        super::copy_pif_rdram(&mut device);
+        assert_eq!(
+            u32::from_ne_bytes(device.rdram.mem[0x1000..0x1004].try_into().unwrap()),
+            0xAABB_CCDD
+        );
     }
 }

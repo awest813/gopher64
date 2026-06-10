@@ -66,15 +66,6 @@ fn set_status(device: &mut device::Device, rx_buf: usize) {
     device.pif.ram[rx_buf + 2] = device.vru.status;
 }
 
-fn read_u16_le_at(bytes: &[u8], offset: usize) -> u16 {
-    u16::from_ne_bytes(
-        bytes
-            .get(offset..offset + 2)
-            .and_then(|slice| slice.try_into().ok())
-            .unwrap_or([0; 2]),
-    )
-}
-
 pub fn process(device: &mut device::Device, channel: usize) {
     let Some((_, _, tx_buf, rx_buf)) = device.pif.channels[channel].endpoints() else {
         eprintln!("Skipping VRU command on malformed PIF channel {channel}");
@@ -180,7 +171,7 @@ pub fn process(device: &mut device::Device, channel: usize) {
         }
         JCMD_VRU_WRITE_INIT => {
             let offset = tx_buf + 1;
-            if read_u16_le_at(&device.pif.ram, offset) == 0 {
+            if device::memory::read_u16_le_at(&device.pif.ram, offset) == 0 {
                 device.vru.talking = false;
                 device::events::remove_event(device, device::events::EVENT_TYPE_VRU);
             }
@@ -229,7 +220,7 @@ pub fn process(device: &mut device::Device, channel: usize) {
             for i in 0..10 {
                 let offset = tx_buf + 3 + (i * 2);
                 device.vru.word_buffer[device.vru.load_offset as usize] =
-                    read_u16_le_at(&device.pif.ram, offset);
+                    device::memory::read_u16_le_at(&device.pif.ram, offset);
                 device.vru.load_offset += 1;
             }
             device.vru.status = 0; /* status is always set to 0 after a write */
@@ -2724,4 +2715,21 @@ fn create_word_mappings(device: &mut device::Device) {
             String::from("take-that"),
         ),
     ]);
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn malformed_vru_channel_is_skipped() {
+        let mut device = *crate::device::Device::new(false);
+        device.pif.channels[0].tx = Some(0);
+        device.pif.channels[0].rx = Some(1);
+        device.pif.channels[0].tx_buf = None;
+        device.pif.channels[0].rx_buf = Some(32);
+        device.pif.ram[0] = super::JCMD_VRU_READ_STATUS;
+
+        super::process(&mut device, 0);
+
+        assert_eq!(device.pif.ram[32], 0);
+    }
 }

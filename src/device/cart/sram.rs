@@ -48,25 +48,10 @@ pub fn format_flash(device: &mut device::Device) {
     }
 }
 
-fn read_u32_be_at(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_be_bytes(
-        bytes
-            .get(offset..offset + 4)
-            .and_then(|slice| slice.try_into().ok())
-            .unwrap_or([0; 4]),
-    )
-}
-
-fn write_u32_be_at(bytes: &mut [u8], offset: usize, value: u32) {
-    if let Some(slot) = bytes.get_mut(offset..offset + 4) {
-        slot.copy_from_slice(&value.to_be_bytes());
-    }
-}
-
 fn read_mem_sram(device: &mut device::Device, address: u64) -> u32 {
     let masked_address = address as usize & sram_mask(device);
 
-    read_u32_be_at(&device.ui.storage.saves.sram.data, masked_address)
+    device::memory::read_u32_be_at(&device.ui.storage.saves.sram.data, masked_address)
 }
 
 fn read_mem_flash(device: &device::Device, address: u64) -> u32 {
@@ -110,9 +95,10 @@ pub fn read_mem(
 fn write_mem_sram(device: &mut device::Device, address: u64, value: u32, mask: u32) {
     let masked_address = address as usize & sram_mask(device);
 
-    let mut data = read_u32_be_at(&device.ui.storage.saves.sram.data, masked_address);
+    let mut data =
+        device::memory::read_u32_be_at(&device.ui.storage.saves.sram.data, masked_address);
     device::memory::masked_write_32(&mut data, value, mask);
-    write_u32_be_at(
+    device::memory::write_u32_be_at(
         &mut device.ui.storage.saves.sram.data,
         masked_address,
         data,

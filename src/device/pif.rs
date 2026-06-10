@@ -36,15 +36,6 @@ impl PifChannel {
     }
 }
 
-fn read_u32_be_at(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_be_bytes(
-        bytes
-            .get(offset..offset + 4)
-            .and_then(|slice| slice.try_into().ok())
-            .unwrap_or([0; 4]),
-    )
-}
-
 pub const PIF_RAM_SIZE: usize = 64;
 const PIF_CHANNELS_COUNT: usize = 5;
 const PIF_RAM_OFFSET: usize = 0x7C0;
@@ -60,10 +51,10 @@ pub fn read_mem(
 
     let mut masked_address = address as usize & PIF_MASK;
     if masked_address < PIF_RAM_OFFSET {
-        read_u32_be_at(&device.pif.rom, masked_address)
+        device::memory::read_u32_be_at(&device.pif.rom, masked_address)
     } else {
         masked_address -= PIF_RAM_OFFSET;
-        read_u32_be_at(&device.pif.ram, masked_address)
+        device::memory::read_u32_be_at(&device.pif.ram, masked_address)
     }
 }
 
@@ -74,9 +65,9 @@ pub fn write_mem(device: &mut device::Device, address: u64, value: u32, mask: u3
         return;
     }
     masked_address -= PIF_RAM_OFFSET;
-    let mut data = read_u32_be_at(&device.pif.ram, masked_address);
+    let mut data = device::memory::read_u32_be_at(&device.pif.ram, masked_address);
     device::memory::masked_write_32(&mut data, value, mask);
-    device.pif.ram[masked_address..masked_address + 4].copy_from_slice(&data.to_be_bytes());
+    device::memory::write_u32_be_at(&mut device.pif.ram, masked_address, data);
 
     device.si.dma_dir = device::si::DmaDir::Write;
     device::events::create_event(device, device::events::EVENT_TYPE_SI, 3200); //based on https://github.com/rasky/n64-systembench
@@ -411,5 +402,17 @@ mod tests {
             crate::device::memory::AccessSize::Word,
         );
         assert_eq!(value, 0);
+    }
+
+    #[test]
+    fn pif_ram_write_is_bounds_safe() {
+        let mut device = *crate::device::Device::new(false);
+        super::write_mem(
+            &mut device,
+            (super::PIF_RAM_OFFSET + super::PIF_RAM_SIZE - 2) as u64,
+            0xDEAD_BEEF,
+            0xFFFF_FFFF,
+        );
+        assert_eq!(device::memory::read_u32_be_at(&device.pif.ram, super::PIF_RAM_SIZE), 0);
     }
 }
