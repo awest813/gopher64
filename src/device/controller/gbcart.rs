@@ -391,7 +391,9 @@ pub fn read(
         CartType::MBC3RamBatt => read_mbc3(pif_ram, cart, address, data, size),
         CartType::MBC3RamBattRtc => read_mbc3(pif_ram, cart, address, data, size),
         CartType::MBC5RamBatt => read_mbc5(pif_ram, cart, address, data, size),
-        _ => panic!("Unsupported cart type"),
+        _ => {
+            eprintln!("Unsupported GB cart type for read");
+        }
     }
 }
 
@@ -411,7 +413,9 @@ pub fn write(
         CartType::MBC3RamBatt => write_mbc3(pif_ram, cart, address, data, size, elapsed_time),
         CartType::MBC3RamBattRtc => write_mbc3(pif_ram, cart, address, data, size, elapsed_time),
         CartType::MBC5RamBatt => write_mbc5(pif_ram, cart, address, data, size),
-        _ => panic!("Unsupported cart type"),
+        _ => {
+            eprintln!("Unsupported GB cart type for write");
+        }
     }
 }
 
@@ -421,6 +425,9 @@ pub fn get_cart_type(data: u8) -> CartType {
         0x10 => CartType::MBC3RamBattRtc,
         0x13 => CartType::MBC3RamBatt,
         0x1b => CartType::MBC5RamBatt,
-        _ => panic!("Unsupported cart type {data:x}"),
+        _ => {
+            eprintln!("Unsupported GB cart type {data:#x}");
+            CartType::None
+        }
     }
 }
