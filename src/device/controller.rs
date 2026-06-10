@@ -176,7 +176,8 @@ pub fn pak_switch_event(device: &mut device::Device) {
                 }
                 PakType::TransferPak => PakType::MemPak,
                 _ => {
-                    panic!("Invalid pak type");
+                    eprintln!("Invalid pak type cycle state: {:?}", channel.change_pak);
+                    channel.change_pak = PakType::None;
                 }
             };
 

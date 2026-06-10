@@ -25,6 +25,7 @@ pub const EEPROM_MAX_SIZE: usize = 0x800;
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct AfRtc {
     pub control: u16,
+    pub block1: [u8; 8],
 }
 
 fn byte2bcd(mut n: u32) -> u8 {
@@ -119,7 +120,8 @@ pub fn process(device: &mut device::Device, channel: usize) {
             device.pif.channels[channel].rx_buf.unwrap(),
         ),
         _ => {
-            panic!("unknown cart command")
+            eprintln!("unknown cart command: {cmd:#x}");
+            device.pif.ram[device.pif.channels[channel].rx.unwrap()] |= 0x80;
         }
     }
 }
@@ -211,14 +213,17 @@ fn af_rtc_read_block(device: &mut device::Device, block: usize, offset: usize, s
             device.pif.ram[status] = 0x00;
         }
         1 => {
-            panic!("AF-RTC reading block 1 is not implemented !");
+            device.pif.ram[offset..offset + 8]
+                .copy_from_slice(&device.cart.rtc.block1);
+            device.pif.ram[status] = 0x00;
         }
         2 => {
             time2data(device, offset);
             device.pif.ram[status] = 0x00;
         }
         _ => {
-            panic!("AF-RTC read invalid block");
+            eprintln!("AF-RTC read invalid block: {}", device.pif.ram[block]);
+            device.pif.ram[status] = 0x80;
         }
     }
 }
@@ -234,7 +239,9 @@ fn af_rtc_write_block(device: &mut device::Device, block: usize, offset: usize, 
             if (device.cart.rtc.control & 0x01) != 0 {
                 return;
             }
-            panic!("AF-RTC writing block 1 is not implemented !");
+            device.cart.rtc.block1
+                .copy_from_slice(&device.pif.ram[offset..offset + 8]);
+            device.pif.ram[status] = 0x00;
         }
         2 => {
             /* block 2 read-only when control[1] is set */
@@ -248,7 +255,8 @@ fn af_rtc_write_block(device: &mut device::Device, block: usize, offset: usize, 
         }
 
         _ => {
-            panic!("AF-RTC write invalid block");
+            eprintln!("AF-RTC write invalid block: {}", device.pif.ram[block]);
+            device.pif.ram[status] = 0x80;
         }
     }
 }
@@ -275,5 +283,36 @@ mod tests {
         assert!(is_valid_bcd(0x45));
         assert!(!is_valid_bcd(0x1a));
         assert!(!is_valid_bcd(0xa0));
+    }
+
+    fn device_with_pif(block: u8, data: &[u8]) -> crate::device::Device {
+        let mut device = *crate::device::Device::new(false);
+        device.pif.ram[0] = block;
+        device.pif.ram[1..1 + data.len()].copy_from_slice(data);
+        device
+    }
+
+    #[test]
+    fn af_rtc_block1_roundtrip() {
+        let mut device = device_with_pif(1, &[0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]);
+        super::af_rtc_write_block(&mut device, 0, 1, 9);
+        assert_eq!(device.cart.rtc.block1, [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]);
+        assert_eq!(device.pif.ram[9], 0x00);
+
+        device.pif.ram[1..9].fill(0);
+        super::af_rtc_read_block(&mut device, 0, 1, 9);
+        assert_eq!(
+            &device.pif.ram[1..9],
+            &[0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]
+        );
+        assert_eq!(device.pif.ram[9], 0x00);
+    }
+
+    #[test]
+    fn af_rtc_block1_write_respects_lock() {
+        let mut device = device_with_pif(1, &[0xff; 8]);
+        device.cart.rtc.control = 0x01;
+        super::af_rtc_write_block(&mut device, 0, 1, 9);
+        assert_eq!(device.cart.rtc.block1, [0; 8]);
     }
 }
