@@ -100,5 +100,5 @@ pub fn translate_events(device: &mut device::Device, old_count: u64, new_count: 
 }
 
 pub fn dummy_event(_device: &mut device::Device) {
-    panic!("dummy event")
+    eprintln!("dummy event fired unexpectedly");
 }

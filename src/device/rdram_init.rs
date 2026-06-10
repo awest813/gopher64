@@ -204,10 +204,10 @@ mod tests {
         let mut mem = vec![0u8; 0x400];
         write_memory_size_markers(&mut mem, 0x800000);
         for offset in MEMORY_SIZE_MARKER_OFFSETS {
-            assert_eq!(
-                u32::from_ne_bytes(mem[offset..offset + 4].try_into().unwrap()),
-                0x800000
-            );
+            let marker: [u8; 4] = mem[offset..offset + 4]
+                .try_into()
+                .expect("memory size marker");
+            assert_eq!(u32::from_ne_bytes(marker), 0x800000);
         }
     }
 
@@ -224,14 +224,21 @@ mod tests {
         assert_eq!(device.rdram.regs[3][1], rdram_reg_device_id_make(6));
 
         for offset in MEMORY_SIZE_MARKER_OFFSETS {
-            assert_eq!(
-                u32::from_ne_bytes(
-                    device.rdram.mem[offset..offset + 4]
-                        .try_into()
-                        .unwrap()
-                ),
-                device.rdram.size
-            );
+            let marker: [u8; 4] = device.rdram.mem[offset..offset + 4]
+                .try_into()
+                .expect("memory size marker");
+            assert_eq!(u32::from_ne_bytes(marker), device.rdram.size);
         }
+    }
+
+    #[test]
+    fn init_registers_configures_4mb_n64_pak() {
+        let mut device = *device::Device::new(false);
+        device.rdram.size = 0x400000;
+        device::rdram::init(&mut device);
+
+        assert_eq!(device.rdram.regs[0][1], rdram_reg_device_id_make(0));
+        assert_eq!(device.rdram.regs[1][1], rdram_reg_device_id_make(2));
+        assert_eq!((device.ri.regs[device::ri::RI_REFRESH_REG] >> 19) & 0xF, 3);
     }
 }

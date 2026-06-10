@@ -317,8 +317,9 @@ fn get_control_registers_fpu(device: &device::Device, index: u32) -> u32 {
     match index {
         0 => device.cpu.cop1.fcr0,
         31 => device.cpu.cop1.fcr31,
-        _ => {
-            panic!("unknown FCR register")
+        index => {
+            eprintln!("unknown FCR register {index}");
+            0
         }
     }
 }
@@ -362,8 +363,8 @@ fn set_control_registers_fpu(device: &mut device::Device, index: u32, data: u32)
             }
             */
         }
-        _ => {
-            panic!("unknown FCR register")
+        index => {
+            eprintln!("Ignoring write to unknown FCR register {index}");
         }
     }
 }
@@ -748,5 +749,40 @@ pub fn set_fgr_registers(device: &mut device::Device, status_reg: u64) {
             device.cpu.cop1.fgr64[i] = [bytes_lo, bytes_hi].concat().try_into().unwrap();
             i += 2;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::device;
+    use crate::device::cop0::COP0_STATUS_CU1;
+
+    fn cop1_opcode(instr: u32, fs: u32, rt: u32) -> u32 {
+        (17 << 26) | (instr << 21) | (fs << 11) | (rt << 16)
+    }
+
+    #[test]
+    fn unknown_fcr_read_returns_zero() {
+        let mut device = *device::Device::new(false);
+        init(&mut device);
+        device.cpu.cop0.regs[device::cop0::COP0_STATUS_REG] |= COP0_STATUS_CU1;
+
+        device.cpu.cop1.instrs[2](&mut device, cop1_opcode(2, 7, 1));
+
+        assert_eq!(device.cpu.gpr[1], 0);
+    }
+
+    #[test]
+    fn unknown_fcr_write_is_ignored() {
+        let mut device = *device::Device::new(false);
+        init(&mut device);
+        device.cpu.cop0.regs[device::cop0::COP0_STATUS_REG] |= COP0_STATUS_CU1;
+        device.cpu.cop1.fcr31 = 0x1234_5678;
+
+        device.cpu.gpr[16] = 0xFFFF_FFFF;
+        device.cpu.cop1.instrs[6](&mut device, cop1_opcode(6, 7, 16));
+
+        assert_eq!(device.cpu.cop1.fcr31, 0x1234_5678);
     }
 }
