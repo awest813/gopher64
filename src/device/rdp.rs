@@ -57,6 +57,10 @@ pub fn read_regs_dpc(
         device::cop0::add_cycles(device, 20);
     }
     let reg = (address & 0xFFFF) >> 2;
+    if reg as usize >= DPC_REGS_COUNT {
+        eprintln!("Unknown DPC register read {reg} at {address:#x}");
+        return 0;
+    }
     match reg as usize {
         DPC_STATUS_REG => {
             let value =
@@ -80,6 +84,10 @@ pub fn read_regs_dpc(
 
 pub fn write_regs_dpc(device: &mut device::Device, address: u64, value: u32, mask: u32) {
     let reg = (address & 0xFFFF) >> 2;
+    if reg as usize >= DPC_REGS_COUNT {
+        eprintln!("Unknown DPC register write {reg} at {address:#x}");
+        return;
+    }
     match reg as usize {
         DPC_CURRENT_REG | DPC_CLOCK_REG | DPC_BUFBUSY_REG | DPC_PIPEBUSY_REG | DPC_TMEM_REG => {}
         DPC_STATUS_REG => update_dpc_status(device, value & mask),
@@ -130,15 +138,21 @@ pub fn read_regs_dps(
     _access_size: device::memory::AccessSize,
 ) -> u32 {
     device::cop0::add_cycles(device, 20);
-    device.rdp.regs_dps[((address & 0xFFFF) >> 2) as usize]
+    let reg = ((address & 0xFFFF) >> 2) as usize;
+    if reg >= DPS_REGS_COUNT {
+        eprintln!("Unknown DPS register read {reg} at {address:#x}");
+        return 0;
+    }
+    device.rdp.regs_dps[reg]
 }
 
 pub fn write_regs_dps(device: &mut device::Device, address: u64, value: u32, mask: u32) {
-    device::memory::masked_write_32(
-        &mut device.rdp.regs_dps[((address & 0xFFFF) >> 2) as usize],
-        value,
-        mask,
-    )
+    let reg = ((address & 0xFFFF) >> 2) as usize;
+    if reg >= DPS_REGS_COUNT {
+        eprintln!("Unknown DPS register write {reg} at {address:#x}");
+        return;
+    }
+    device::memory::masked_write_32(&mut device.rdp.regs_dps[reg], value, mask);
 }
 
 fn update_dpc_status(device: &mut device::Device, w: u32) {
@@ -200,4 +214,24 @@ pub fn rdp_interrupt_event(device: &mut device::Device) {
         !(DPC_STATUS_START_GCLK | DPC_STATUS_PIPE_BUSY | DPC_STATUS_CMD_BUSY);
 
     device::mi::set_rcp_interrupt(device, device::mi::MI_INTR_DP)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read_regs_dpc, read_regs_dps, DPC_REGS_COUNT, DPS_REGS_COUNT};
+    use crate::device::memory::AccessSize;
+
+    #[test]
+    fn unknown_dpc_register_read_returns_zero() {
+        let mut device = *crate::device::Device::new(false);
+        let address = (DPC_REGS_COUNT as u64 + 1) << 2;
+        assert_eq!(read_regs_dpc(&mut device, address, AccessSize::Word), 0);
+    }
+
+    #[test]
+    fn unknown_dps_register_read_returns_zero() {
+        let mut device = *crate::device::Device::new(false);
+        let address = (DPS_REGS_COUNT as u64 + 1) << 2;
+        assert_eq!(read_regs_dps(&mut device, address, AccessSize::Word), 0);
+    }
 }

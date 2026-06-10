@@ -15,8 +15,14 @@ pub struct MatchboxSocket(matchbox_socket::WebRtcSocket);
 
 impl ggrs::NonBlockingSocket<matchbox_socket::PeerId> for MatchboxSocket {
     fn send_to(&mut self, msg: &ggrs::Message, addr: &matchbox_socket::PeerId) {
-        let encoded = postcard::to_stdvec(msg).expect("serialization failed");
-        let channel = self.0.get_channel_mut(0).unwrap();
+        let Ok(encoded) = postcard::to_stdvec(msg) else {
+            eprintln!("Failed to serialize GGRS message");
+            return;
+        };
+        let Some(channel) = self.0.get_channel_mut(0) else {
+            eprintln!("GGRS channel unavailable for send");
+            return;
+        };
         if channel.config().max_retransmits != Some(0) || channel.config().ordered {
             eprintln!("Sending GGRS traffic over reliable channel");
         }
@@ -24,7 +30,9 @@ impl ggrs::NonBlockingSocket<matchbox_socket::PeerId> for MatchboxSocket {
     }
 
     fn receive_all_messages(&mut self) -> Vec<(matchbox_socket::PeerId, ggrs::Message)> {
-        let channel = self.0.get_channel_mut(0).unwrap();
+        let Some(channel) = self.0.get_channel_mut(0) else {
+            return Vec::new();
+        };
         channel
             .receive()
             .iter()
@@ -278,11 +286,18 @@ pub fn process_netplay(
 fn advance_frame(device: &mut device::Device) {
     let netplay = device.netplay.as_mut().unwrap();
     let local_input = ui::input::get(&mut device.ui, 0, device.frame_counter);
-    let local_handle = *netplay.session.local_player_handles().first().unwrap();
-    netplay
+    let Some(local_handle) = netplay.session.local_player_handles().first() else {
+        eprintln!("Netplay session has no local player handle");
+        return;
+    };
+    if netplay
         .session
-        .add_local_input(local_handle, local_input)
-        .unwrap();
+        .add_local_input(*local_handle, local_input)
+        .is_err()
+    {
+        eprintln!("Failed to add local netplay input");
+        return;
+    }
     match netplay.session.advance_frame() {
         Ok(requests) => {
             netplay.requests.extend(requests);
@@ -290,7 +305,9 @@ fn advance_frame(device: &mut device::Device) {
         Err(ggrs::GgrsError::PredictionThreshold) => {
             println!("prediction threshold reached");
         }
-        Err(e) => panic!("{e}"),
+        Err(e) => {
+            eprintln!("Netplay advance_frame error: {e}");
+        }
     }
 }
 
