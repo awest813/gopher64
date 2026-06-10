@@ -11,21 +11,6 @@ const WRITE_LEN_OFFSET: usize = 0x14;
 const BUF_OFFSET: usize = 0x20;
 const BUF_SIZE: usize = 0x200;
 
-fn read_u32_be_at(buffer: &[u8], offset: usize) -> u32 {
-    u32::from_be_bytes(
-        buffer
-            .get(offset..offset + 4)
-            .and_then(|slice| slice.try_into().ok())
-            .unwrap_or([0; 4]),
-    )
-}
-
-fn write_u32_be_at(buffer: &mut [u8], offset: usize, value: u32) {
-    if let Some(slot) = buffer.get_mut(offset..offset + 4) {
-        slot.copy_from_slice(&value.to_be_bytes());
-    }
-}
-
 fn flush_text_buffer(device: &mut device::Device, length: usize) {
     let length = length.min(BUF_SIZE);
     let end = BUF_OFFSET.saturating_add(length);
@@ -47,15 +32,16 @@ pub fn read_mem(
     _access_size: device::memory::AccessSize,
 ) -> u32 {
     let masked_address = address as usize & IS_VIEWER_MASK;
-    read_u32_be_at(&device.cart.is_viewer_buffer, masked_address)
+    device::memory::read_u32_be_at(&device.cart.is_viewer_buffer, masked_address)
 }
 
 pub fn write_mem(device: &mut device::Device, address: u64, value: u32, mask: u32) {
     let masked_address = address as usize & IS_VIEWER_MASK;
     if masked_address == WRITE_LEN_OFFSET {
-        let mut length_reg = read_u32_be_at(&device.cart.is_viewer_buffer, WRITE_LEN_OFFSET);
+        let mut length_reg =
+            device::memory::read_u32_be_at(&device.cart.is_viewer_buffer, WRITE_LEN_OFFSET);
         device::memory::masked_write_32(&mut length_reg, value, mask);
-        write_u32_be_at(
+        device::memory::write_u32_be_at(
             &mut device.cart.is_viewer_buffer,
             WRITE_LEN_OFFSET,
             length_reg,
@@ -64,9 +50,10 @@ pub fn write_mem(device: &mut device::Device, address: u64, value: u32, mask: u3
         return;
     }
 
-    let mut data = read_u32_be_at(&device.cart.is_viewer_buffer, masked_address);
+    let mut data =
+        device::memory::read_u32_be_at(&device.cart.is_viewer_buffer, masked_address);
     device::memory::masked_write_32(&mut data, value, mask);
-    write_u32_be_at(&mut device.cart.is_viewer_buffer, masked_address, data);
+    device::memory::write_u32_be_at(&mut device.cart.is_viewer_buffer, masked_address, data);
 }
 
 #[cfg(test)]
@@ -110,7 +97,7 @@ mod tests {
         );
 
         assert_eq!(
-            read_u32_be_at(&device.cart.is_viewer_buffer, WRITE_LEN_OFFSET),
+            device::memory::read_u32_be_at(&device.cart.is_viewer_buffer, WRITE_LEN_OFFSET),
             text.len() as u32
         );
     }
@@ -128,7 +115,7 @@ mod tests {
         );
 
         assert_eq!(
-            read_u32_be_at(&device.cart.is_viewer_buffer, WRITE_LEN_OFFSET),
+            device::memory::read_u32_be_at(&device.cart.is_viewer_buffer, WRITE_LEN_OFFSET),
             (BUF_SIZE + 64) as u32
         );
     }
@@ -136,7 +123,10 @@ mod tests {
     #[test]
     fn is_viewer_read_out_of_range_returns_zero() {
         let device = *crate::device::Device::new(false);
-        let value = read_u32_be_at(&device.cart.is_viewer_buffer, device.cart.is_viewer_buffer.len());
+        let value = device::memory::read_u32_be_at(
+            &device.cart.is_viewer_buffer,
+            device.cart.is_viewer_buffer.len(),
+        );
         assert_eq!(value, 0);
     }
 
