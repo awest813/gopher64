@@ -22,6 +22,16 @@ pub struct PifChannel {
     pub change_pak: device::controller::PakType,
 }
 
+impl PifChannel {
+    pub(crate) fn tx_rx(&self) -> Option<(usize, usize)> {
+        Some((self.tx?, self.rx?))
+    }
+
+    pub(crate) fn buffers(&self) -> Option<(usize, usize)> {
+        Some((self.tx_buf?, self.rx_buf?))
+    }
+}
+
 pub const PIF_RAM_SIZE: usize = 64;
 const PIF_CHANNELS_COUNT: usize = 5;
 const PIF_RAM_OFFSET: usize = 0x7C0;
@@ -79,13 +89,18 @@ fn process_channel(device: &mut device::Device, channel: usize) -> usize {
         return 0;
     }
 
+    let Some((tx, rx)) = device.pif.channels[channel].tx_rx() else {
+        eprintln!("Malformed PIF channel {channel}: missing tx/rx pointers");
+        return 0;
+    };
+
     /* reset Tx/Rx just in case */
-    device.pif.ram[device.pif.channels[channel].tx.unwrap()] &= 0x3f;
-    device.pif.ram[device.pif.channels[channel].rx.unwrap()] &= 0x3f;
+    device.pif.ram[tx] &= 0x3f;
+    device.pif.ram[rx] &= 0x3f;
 
     /* set NoResponse if no device is connected */
     if device.pif.channels[channel].process.is_none() {
-        device.pif.ram[device.pif.channels[channel].rx.unwrap()] |= 0x80;
+        device.pif.ram[rx] |= 0x80;
         return 0;
     }
 
@@ -374,5 +389,17 @@ mod tests {
         let original = device.pif.rom[0..4].to_vec();
         super::write_mem(&mut device, 0, 0xDEADBEEF, 0xFFFFFFFF);
         assert_eq!(&device.pif.rom[0..4], original.as_slice());
+    }
+
+    #[test]
+    fn malformed_pif_channel_is_skipped() {
+        let mut device = *crate::device::Device::new(false);
+        device.pif.channels[0].tx = Some(0);
+        device.pif.channels[0].rx = None;
+        device.pif.ram[0] = 0x01;
+
+        let active = super::update_pif_ram(&mut device);
+
+        assert_eq!(active, 0);
     }
 }
